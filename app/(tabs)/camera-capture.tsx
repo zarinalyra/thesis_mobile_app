@@ -2,32 +2,24 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, Pressable, Text } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { extractExifData } from '@/utils/exif-extractor';
+import { usePhotos } from '@/context/PhotoContext';
 
 export default function CameraCaptureScreen() {
-  const { farmId, photos: photosParam } = useLocalSearchParams();
+  const { farmId } = useLocalSearchParams();
   const router = useRouter();
+  const { photos, setPhotos, addPhoto } = usePhotos();
   const [permission, requestPermission] = useCameraPermissions();
+  const [locationPermission, requestLocationPermission] = Location.useForegroundPermissions();
   const cameraRef = useRef<CameraView | null>(null);
-  const [photos, setPhotos] = useState<string[]>([]);
 
   useEffect(() => {
     requestPermission();
-  }, [requestPermission]);
-
-  useEffect(() => {
-    if (typeof photosParam === 'string') {
-      try {
-        const parsed = JSON.parse(decodeURIComponent(photosParam));
-        setPhotos(parsed);
-      } catch {
-        setPhotos([]);
-      }
-    } else {
-      setPhotos([]);
-    }
-  }, [photosParam]);
+    requestLocationPermission();
+  }, [requestPermission, requestLocationPermission]);
 
   const handleBackPress = () => {
     router.push(`/(tabs)/farm-map?farmId=${farmId}`);
@@ -36,13 +28,49 @@ export default function CameraCaptureScreen() {
   const handleCapture = async () => {
     if (!cameraRef.current) return;
     try {
-      const result = await cameraRef.current.takePictureAsync({ quality: 0.8, skipProcessing: true });
-      const nextPhotos = [...photos, result.uri];
-      setPhotos(nextPhotos);
+      // Capture photo IMMEDIATELY - no waiting
+      const result = await cameraRef.current.takePictureAsync({ 
+        quality: 0.8, 
+        exif: true
+      });
 
-      if (nextPhotos.length >= 3) {
-        const encoded = encodeURIComponent(JSON.stringify(nextPhotos));
-        router.push(`/(tabs)/photo-review?farmId=${farmId}&photos=${encoded}`);
+      // Add photo to list immediately with placeholder EXIF
+      const placeholderPhoto = { 
+        uri: result.uri, 
+        exif: { timestamp: new Date().toISOString() },
+        location: undefined as any
+      };
+      addPhoto(placeholderPhoto);
+
+      // Process EXIF and location in background (don't await)
+      (async () => {
+        try {
+          const exif = await extractExifData(result);
+          placeholderPhoto.exif = exif;
+        } catch (err) {
+          console.warn('Failed to extract EXIF:', err);
+        }
+
+        if (locationPermission?.granted) {
+          try {
+            const location = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            });
+            placeholderPhoto.location = {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              altitude: location.coords.altitude,
+            };
+            console.log('Captured device location:', placeholderPhoto.location);
+          } catch (err) {
+            console.warn('Failed to get location:', err);
+          }
+        }
+      })();
+
+      // Check if we have 3 photos (this will happen instantly now)
+      if (photos.length >= 2) { // Will be 3 after adding
+        router.push(`/(tabs)/photo-review?farmId=${farmId}`);
       }
     } catch (e) {
       console.warn('Failed to take photo', e);

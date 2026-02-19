@@ -1,16 +1,63 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, Pressable, Platform } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, Pressable, Platform, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import MapComponent from '@/components/map-component';
+import { supabase } from '@/supabase';
+
+interface TreeMarker {
+  id: string;
+  coordinate: { latitude: number; longitude: number };
+  title: string;
+  hasDisease: boolean;
+}
 
 export default function FarmMapScreen() {
   const { farmId } = useLocalSearchParams();
   const navigation = useNavigation();
   const router = useRouter();
-  const [markers, setMarkers] = useState<{ id: string; coordinate: { latitude: number; longitude: number }; title: string }[]>([]);
+  const [markers, setMarkers] = useState<TreeMarker[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchTrees();
+  }, [farmId]);
+
+  const fetchTrees = async () => {
+    try {
+      console.log('Fetching trees for farm:', farmId);
+      const { data, error } = await supabase
+        .from('geotags')
+        .select('id, latitude, longitude, raw_exif, farm_id')
+        .eq('farm_id', farmId);
+
+      if (error) {
+        console.error('Error fetching trees:', error);
+        throw error;
+      }
+
+      console.log('Fetched data:', data);
+
+      const treeMarkers: TreeMarker[] = data.map((tree, index) => ({
+        id: tree.id,
+        coordinate: {
+          latitude: tree.latitude,
+          longitude: tree.longitude,
+        },
+        title: `Tree ${index + 1}`,
+        hasDisease: tree.raw_exif?.hasDisease || false,
+      }));
+
+      console.log('Tree markers:', treeMarkers);
+      setMarkers(treeMarkers);
+    } catch (error) {
+      console.error('Error fetching trees:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleHomePress = () => {
     navigation.goBack();
@@ -21,13 +68,7 @@ export default function FarmMapScreen() {
   };
 
   const handleMapPress = (event: any) => {
-    const { coordinate } = event.nativeEvent;
-    const newMarker = {
-      id: Date.now().toString(),
-      coordinate,
-      title: `Tree ${markers.length + 1}`,
-    };
-    setMarkers([...markers, newMarker]);
+    // Disabled manual marker addition
   };
 
   const farmName = `Farm-${farmId}`;
@@ -48,7 +89,13 @@ export default function FarmMapScreen() {
         <Pressable style={styles.addTreeButton} onPress={handleAddTreePress}>
           <ThemedText style={styles.addTreeButtonText}>Add Tree</ThemedText>
         </Pressable>
-        <MapComponent markers={markers} onMapPress={handleMapPress} farmName={farmName} />
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#4CAF50" />
+          </View>
+        ) : (
+          <MapComponent markers={markers} onMapPress={handleMapPress} farmName={farmName} />
+        )}
       </View>
     </View>
   );
@@ -113,5 +160,10 @@ const styles = StyleSheet.create({
     color: '#000',
     fontWeight: '600',
     fontSize: 14,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
