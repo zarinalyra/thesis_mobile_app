@@ -80,27 +80,30 @@ export default function CameraCaptureScreen() {
 
       // Process EXIF and location in background
       (async () => {
-        try {
-          const exif = await extractExifData(result);
-          placeholderPhoto.exif = exif;
-        } catch (err) {
-          console.warn('Failed to extract EXIF:', err);
-        }
-
+        let freshLocation;
         if (locationPermission?.granted) {
           try {
             const location = await Location.getCurrentPositionAsync({
               accuracy: Location.Accuracy.Balanced,
             });
-            placeholderPhoto.location = {
+            freshLocation = {
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
               altitude: location.coords.altitude,
+              accuracy: location.coords.accuracy,
             };
-            console.log('Captured device location:', placeholderPhoto.location);
+            placeholderPhoto.location = freshLocation;
+            console.log('Captured device location:', freshLocation);
           } catch (err) {
             console.warn('Failed to get location:', err);
           }
+        }
+
+        try {
+          const exif = await extractExifData(result, freshLocation);
+          placeholderPhoto.exif = exif;
+        } catch (err) {
+          console.warn('Failed to extract EXIF:', err);
         }
       })();
 
