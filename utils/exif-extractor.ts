@@ -4,6 +4,7 @@ export interface ExifData {
   latitude?: number;
   longitude?: number;
   altitude?: number;
+  accuracy?: number;
   timestamp?: string;
   make?: string;
   model?: string;
@@ -15,10 +16,13 @@ export interface ExifData {
 export interface PhotoWithExif {
   uri: string;
   exif: ExifData;
-  location?: { latitude: number; longitude: number; altitude?: number };
+  location?: { latitude: number; longitude: number; altitude?: number; accuracy?: number };
 }
 
-export async function extractExifData(photoResult: any): Promise<ExifData> {
+export async function extractExifData(
+  photoResult: any,
+  freshLocation?: { latitude: number; longitude: number; altitude?: number; accuracy?: number }
+): Promise<ExifData> {
   const exif: ExifData = {
     timestamp: new Date().toISOString(),
     width: photoResult.width,
@@ -27,9 +31,11 @@ export async function extractExifData(photoResult: any): Promise<ExifData> {
 
   if (photoResult.exif) {
     const e = photoResult.exif;
-    exif.latitude = e.GPSLatitude;
-    exif.longitude = e.GPSLongitude;
-    exif.altitude = e.GPSAltitude;
+    // Use fresh device location first, fall back to EXIF only if unavailable
+    exif.latitude = freshLocation?.latitude ?? e.GPSLatitude;
+    exif.longitude = freshLocation?.longitude ?? e.GPSLongitude;
+    exif.altitude = freshLocation?.altitude ?? e.GPSAltitude;
+    exif.accuracy = freshLocation?.accuracy;
     exif.make = e.Make;
     exif.model = e.Model;
     exif.orientation = e.Orientation;
@@ -49,26 +55,45 @@ function averageExifData(photos: PhotoWithExif[]): {
     throw new Error('No photos to average');
   }
 
-  let latSum = 0, lonSum = 0, altSum = 0, altCount = 0;
+  const ACCURACY_THRESHOLD_METERS = 15;
+  let latSum = 0, lonSum = 0, altSum = 0, altCount = 0, validCount = 0;
   const make = photos[0].exif.make;
   const model = photos[0].exif.model;
   const firstTimestamp = photos[0].exif.timestamp || new Date().toISOString();
 
   for (const photo of photos) {
-    const lat = photo.exif.latitude || photo.location?.latitude || 0;
-    const lon = photo.exif.longitude || photo.location?.longitude || 0;
+    // Filter by accuracy if available
+    if (photo.exif.accuracy && photo.exif.accuracy > ACCURACY_THRESHOLD_METERS) {
+      console.warn(`Skipping photo — GPS accuracy too low: ${photo.exif.accuracy}m`);
+      continue;
+    }
+
+    const lat = photo.exif.latitude ?? photo.location?.latitude;
+    const lon = photo.exif.longitude ?? photo.location?.longitude;
+    
+    // Skip invalid coordinates
+    if (lat == null || lon == null || (lat === 0 && lon === 0)) {
+      console.warn('Skipping photo with missing/invalid coordinates');
+      continue;
+    }
     
     latSum += lat;
     lonSum += lon;
+    validCount++;
     
-    if (photo.exif.altitude || photo.location?.altitude) {
-      altSum += photo.exif.altitude || photo.location?.altitude || 0;
+    const alt = photo.exif.altitude ?? photo.location?.altitude;
+    if (alt != null) {
+      altSum += alt;
       altCount++;
     }
   }
 
-  const avgLatitude = latSum / photos.length;
-  const avgLongitude = lonSum / photos.length;
+  if (validCount === 0) {
+    throw new Error('No photos with valid GPS coordinates');
+  }
+
+  const avgLatitude = latSum / validCount;
+  const avgLongitude = lonSum / validCount;
   const avgAltitude = altCount > 0 ? altSum / altCount : null;
 
   return {
@@ -78,6 +103,7 @@ function averageExifData(photos: PhotoWithExif[]): {
     timestamp: firstTimestamp,
     rawExif: {
       photoCount: photos.length,
+      validPhotoCount: validCount,
       make: make,
       model: model,
       avgWidth: Math.round(photos.reduce((sum, p) => sum + (p.exif.width || 0), 0) / photos.length),
@@ -92,6 +118,7 @@ export async function uploadPhotosToSupabase(
   farmId: string,
   hasDisease: boolean = false
 ) {
+  const uploadedFiles: string[] = [];
   try {
     console.log('=== BATCH UPLOAD START ===');
     console.log('Uploading', photos.length, 'photos for farm', farmId);
@@ -102,20 +129,13 @@ export async function uploadPhotosToSupabase(
 
     // Step 1: Upload all images to storage
     console.log('Step 1: Uploading images to storage...');
-    const uploadedFiles = [];
     for (let i = 0; i < photos.length; i++) {
       const photo = photos[i];
       console.log(`  [${i + 1}/${photos.length}] Reading file...`);
       
-      let fileBase64;
-      try {
-        fileBase64 = await FileSystem.readAsStringAsync(photo.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-      } catch (readError) {
-        console.error('ERROR reading file:', readError);
-        throw new Error(`Failed to read image ${i + 1}: ${readError}`);
-      }
+      const fileBase64 = await FileSystem.readAsStringAsync(photo.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
 
       if (!fileBase64) {
         throw new Error(`Failed to read image ${i + 1} - no base64 data`);
@@ -139,7 +159,6 @@ export async function uploadPhotosToSupabase(
         });
 
       if (uploadError) {
-        console.error('Storage upload error:', uploadError);
         throw new Error(`Storage upload error for image ${i + 1}: ${uploadError.message}`);
       }
 
@@ -158,7 +177,6 @@ export async function uploadPhotosToSupabase(
         .single();
 
       if (imageError) {
-        console.error('Image insert error:', imageError);
         throw new Error(`Image insert error: ${imageError.message}`);
       }
 
@@ -192,7 +210,6 @@ export async function uploadPhotosToSupabase(
       .single();
 
     if (geotagError) {
-      console.error('Geotag insert error:', geotagError);
       throw new Error(`Geotag insert error: ${geotagError.message}`);
     }
 
@@ -200,6 +217,11 @@ export async function uploadPhotosToSupabase(
     console.log('=== BATCH UPLOAD END ===');
     return geotagData;
   } catch (error) {
+    // Rollback uploaded files on failure
+    console.warn('Upload failed, rolling back...');
+    for (const filePath of uploadedFiles) {
+      await supabase.storage.from('leafImages').remove([filePath]);
+    }
     console.error('❌ Batch upload failed:', error);
     throw error;
   }

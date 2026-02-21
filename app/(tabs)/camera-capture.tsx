@@ -1,12 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Pressable, Text } from 'react-native';
+import { View, StyleSheet, Pressable, Text, Dimensions, Animated } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
+import * as Haptics from 'expo-haptics';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { extractExifData } from '@/utils/exif-extractor';
 import { usePhotos } from '@/context/PhotoContext';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const HEADER_HEIGHT = 100;
+const BOTTOM_CONTROLS = 250;
+const AVAILABLE_HEIGHT = SCREEN_HEIGHT - HEADER_HEIGHT - BOTTOM_CONTROLS;
+const ROI_WIDTH = SCREEN_WIDTH * 0.65;
+const ROI_HEIGHT = AVAILABLE_HEIGHT * 0.85;
+const ROI_LEFT = (SCREEN_WIDTH - ROI_WIDTH) / 2;
+const ROI_TOP = HEADER_HEIGHT + (AVAILABLE_HEIGHT - ROI_HEIGHT) / 2;
 
 export default function CameraCaptureScreen() {
   const { farmId } = useLocalSearchParams();
@@ -15,6 +26,7 @@ export default function CameraCaptureScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [locationPermission, requestLocationPermission] = Location.useForegroundPermissions();
   const cameraRef = useRef<CameraView | null>(null);
+  const flashAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     requestPermission();
@@ -28,48 +40,75 @@ export default function CameraCaptureScreen() {
   const handleCapture = async () => {
     if (!cameraRef.current) return;
     try {
-      // Capture photo IMMEDIATELY - no waiting
+      // Haptic feedback
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      
+      // Flash effect
+      Animated.sequence([
+        Animated.timing(flashAnim, { toValue: 1, duration: 80, useNativeDriver: true }),
+        Animated.timing(flashAnim, { toValue: 0, duration: 80, useNativeDriver: true }),
+      ]).start();
+
+      // Capture photo
       const result = await cameraRef.current.takePictureAsync({ 
         quality: 0.8, 
         exif: true
       });
 
-      // Add photo to list immediately with placeholder EXIF
+      // Calculate crop region based on ROI
+      const scaleX = result.width / SCREEN_WIDTH;
+      const scaleY = result.height / SCREEN_HEIGHT;
+      const cropX = ROI_LEFT * scaleX;
+      const cropY = ROI_TOP * scaleY;
+      const cropWidth = ROI_WIDTH * scaleX;
+      const cropHeight = ROI_HEIGHT * scaleY;
+
+      // Crop image to ROI
+      const croppedImage = await ImageManipulator.manipulateAsync(
+        result.uri,
+        [{ crop: { originX: cropX, originY: cropY, width: cropWidth, height: cropHeight } }],
+        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+      );
+
+      // Add cropped photo to list
       const placeholderPhoto = { 
-        uri: result.uri, 
+        uri: croppedImage.uri, 
         exif: { timestamp: new Date().toISOString() },
         location: undefined as any
       };
       addPhoto(placeholderPhoto);
 
-      // Process EXIF and location in background (don't await)
+      // Process EXIF and location in background
       (async () => {
-        try {
-          const exif = await extractExifData(result);
-          placeholderPhoto.exif = exif;
-        } catch (err) {
-          console.warn('Failed to extract EXIF:', err);
-        }
-
+        let freshLocation;
         if (locationPermission?.granted) {
           try {
             const location = await Location.getCurrentPositionAsync({
               accuracy: Location.Accuracy.Balanced,
             });
-            placeholderPhoto.location = {
+            freshLocation = {
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
               altitude: location.coords.altitude,
+              accuracy: location.coords.accuracy,
             };
-            console.log('Captured device location:', placeholderPhoto.location);
+            placeholderPhoto.location = freshLocation;
+            console.log('Captured device location:', freshLocation);
           } catch (err) {
             console.warn('Failed to get location:', err);
           }
         }
+
+        try {
+          const exif = await extractExifData(result, freshLocation);
+          placeholderPhoto.exif = exif;
+        } catch (err) {
+          console.warn('Failed to extract EXIF:', err);
+        }
       })();
 
-      // Check if we have 3 photos (this will happen instantly now)
-      if (photos.length >= 2) { // Will be 3 after adding
+      // Check if we have 3 photos
+      if (photos.length >= 2) {
         router.push(`/(tabs)/photo-review?farmId=${farmId}`);
       }
     } catch (e) {
@@ -108,12 +147,52 @@ export default function CameraCaptureScreen() {
           style={styles.camera}
           facing="back"
         />
+        
+        {/* ROI Overlay */}
+        <View style={styles.overlay}>
+          <View style={[styles.darkRegion, { height: ROI_TOP }]} />
+          <View style={{ flexDirection: 'row', height: ROI_HEIGHT }}>
+            <View style={[styles.darkRegion, { width: ROI_LEFT }]} />
+            <View style={styles.roiBox}>
+              <View style={[styles.corner, styles.topLeft]} />
+              <View style={[styles.corner, styles.topRight]} />
+              <View style={[styles.corner, styles.bottomLeft]} />
+              <View style={[styles.corner, styles.bottomRight]} />
+            </View>
+            <View style={[styles.darkRegion, { flex: 1 }]} />
+          </View>
+          <View style={[styles.darkRegion, { flex: 1 }]} />
+        </View>
+
+        {/* Instructions */}
+        <View style={[styles.instructionContainer, { top: ROI_TOP - 48 }]}>
+          <ThemedText style={styles.instructionText}>
+            Place one coffee leaf inside the box
+          </ThemedText>
+        </View>
+        <View style={[styles.subInstructionContainer, { top: ROI_TOP + ROI_HEIGHT + 12 }]}>
+          <ThemedText style={styles.subInstructionText}>
+            Ensure the leaf fills the frame and avoid overlapping leaves
+          </ThemedText>
+        </View>
+
         <View style={styles.overlayBottom}>
           <ThemedText style={styles.counterText}>{photos.length}/3</ThemedText>
-          <Pressable style={styles.shutterButton} onPress={handleCapture}>
-            <View style={styles.shutterInner} />
+          <Pressable 
+            style={styles.shutterButton} 
+            onPress={handleCapture}
+          >
+            {({ pressed }) => (
+              <View style={[styles.shutterInner, pressed && styles.shutterInnerPressed]} />
+            )}
           </Pressable>
         </View>
+
+        {/* Flash effect */}
+        <Animated.View 
+          style={[styles.flashOverlay, { opacity: flashAnim }]} 
+          pointerEvents="none"
+        />
       </View>
     </View>
   );
@@ -158,6 +237,84 @@ const styles = StyleSheet.create({
   camera: {
     flex: 1,
   },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'column',
+  },
+  darkRegion: {
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  roiBox: {
+    width: ROI_WIDTH,
+    height: ROI_HEIGHT,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.3)',
+    position: 'relative',
+  },
+  corner: {
+    position: 'absolute',
+    width: 22,
+    height: 22,
+  },
+  topLeft: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderColor: '#4ADE80',
+  },
+  topRight: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderColor: '#4ADE80',
+  },
+  bottomLeft: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderColor: '#4ADE80',
+  },
+  bottomRight: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderColor: '#4ADE80',
+  },
+  instructionContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  instructionText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  subInstructionContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  subInstructionText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 11,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
   overlayBottom: {
     position: 'absolute',
     bottom: 32,
@@ -184,6 +341,15 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
+    backgroundColor: '#fff',
+  },
+  shutterInnerPressed: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  flashOverlay: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#fff',
   },
   permissionContainer: {
