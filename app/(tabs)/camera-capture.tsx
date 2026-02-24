@@ -55,24 +55,9 @@ export default function CameraCaptureScreen() {
         exif: true
       });
 
-      // Calculate crop region based on ROI
-      const scaleX = result.width / SCREEN_WIDTH;
-      const scaleY = result.height / SCREEN_HEIGHT;
-      const cropX = ROI_LEFT * scaleX;
-      const cropY = ROI_TOP * scaleY;
-      const cropWidth = ROI_WIDTH * scaleX;
-      const cropHeight = ROI_HEIGHT * scaleY;
-
-      // Crop image to ROI
-      const croppedImage = await ImageManipulator.manipulateAsync(
-        result.uri,
-        [{ crop: { originX: cropX, originY: cropY, width: cropWidth, height: cropHeight } }],
-        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
-      );
-
-      // Add cropped photo to list
+      // Add photo to list (skip cropping for now due to rotation issues)
       const placeholderPhoto = { 
-        uri: croppedImage.uri, 
+        uri: result.uri, 
         exif: { timestamp: new Date().toISOString() },
         location: undefined as any
       };
