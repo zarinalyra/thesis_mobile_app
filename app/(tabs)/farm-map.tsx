@@ -23,6 +23,29 @@ export default function FarmMapScreen() {
 
   useEffect(() => {
     fetchTrees();
+
+    // Realtime subscription
+    const channel = supabase
+      .channel('geotags-changes')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'geotags', filter: `farm_id=eq.${farmId}` },
+        (payload) => {
+          const tree = payload.new;
+          setMarkers((prev) => [
+            ...prev,
+            {
+              id: tree.id,
+              coordinate: { latitude: tree.latitude, longitude: tree.longitude },
+              title: `Tree ${prev.length + 1}`,
+              hasDisease: tree.raw_exif?.hasDisease || false,
+            },
+          ]);
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [farmId]);
 
   const fetchTrees = async () => {

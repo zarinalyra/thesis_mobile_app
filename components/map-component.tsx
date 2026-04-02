@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { View, StyleSheet } from 'react-native';
 import { ThemedText } from './themed-text';
@@ -16,28 +16,38 @@ interface MapComponentProps {
   farmName: string;
 }
 
+const FARM_REGION = {
+  latitude: 14.1977714,
+  longitude: 120.8854955,
+  latitudeDelta: 0.0022,
+  longitudeDelta: 0.0022,
+};
+
 export default function MapComponent({ markers, onMapPress, farmName }: MapComponentProps) {
-  const defaultRegion = {
-    latitude: 14.1975602,
-    longitude: 120.8843819,
-    latitudeDelta: 0.01,
-    longitudeDelta: 0.01,
+  const mapRef = useRef<MapView>(null);
+
+  const handleMapReady = () => {
+    mapRef.current?.animateToRegion(FARM_REGION, 500);
   };
 
-  const region = markers.length > 0 ? {
-    latitude: markers[0].coordinate.latitude,
-    longitude: markers[0].coordinate.longitude,
-    latitudeDelta: 0.01,
-    longitudeDelta: 0.01,
-  } : defaultRegion;
+  useEffect(() => {
+    if (markers.length > 0) {
+      mapRef.current?.fitToCoordinates(
+        markers.map((m) => m.coordinate),
+        { edgePadding: { top: 80, right: 80, bottom: 80, left: 80 }, animated: true }
+      );
+    }
+  }, [markers]);
 
   return (
     <View style={styles.container}>
       <MapView
+        ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={styles.map}
         mapType="hybrid"
-        initialRegion={region}
+        initialRegion={FARM_REGION}
+        onMapReady={handleMapReady}
         onPress={onMapPress}
         showsUserLocation
         showsMyLocationButton

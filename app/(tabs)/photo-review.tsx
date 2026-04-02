@@ -43,9 +43,8 @@ export default function PhotoReviewScreen() {
     try {
       console.log('Starting batch upload of', photos.length, 'photos');
       
-      // TODO: Add disease detection ML model here
-      // For now, randomly assign disease status for demo
-      const hasDisease = Math.random() > 0.7;
+      // Default to no disease until ML model is integrated
+      const hasDisease = false;
       
       await uploadPhotosToSupabase(supabase, photos, farmId as string, hasDisease);
       
