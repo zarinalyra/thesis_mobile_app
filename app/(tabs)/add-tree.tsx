@@ -3,10 +3,12 @@ import { View, StyleSheet, Pressable, TextInput, ScrollView, Alert, Modal } from
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { usePhotos } from '@/context/PhotoContext';
 
 export default function AddTreeScreen() {
   const { farmId } = useLocalSearchParams();
   const router = useRouter();
+  const { setTreeDetails } = usePhotos();
   const farmName = `Farm-${farmId}`;
 
   const [treeId, setTreeId] = useState('');
@@ -181,7 +183,20 @@ export default function AddTreeScreen() {
               style={styles.modalButton}
               onPress={() => {
                 setShowPhotoPrompt(false);
-                router.push(`/(tabs)/camera-capture?farmId=${farmId}`);
+                setTreeDetails({
+                  treeId: treeId.trim(),
+                  treeType,
+                  datePlanted: datePlanted.trim(),
+                });
+                router.push({
+                  pathname: '/(tabs)/camera-capture',
+                  params: {
+                    farmId: String(farmId),
+                    treeId: treeId.trim(),
+                    treeType,
+                    datePlanted: datePlanted.trim(),
+                  },
+                });
               }}
             >
               <ThemedText style={styles.modalButtonText}>Continue</ThemedText>

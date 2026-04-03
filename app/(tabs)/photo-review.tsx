@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { usePhotos } from "@/context/PhotoContext";
 import React, { useState } from "react";
 import {
+  Alert,
   ActivityIndicator,
   Dimensions,
   FlatList,
@@ -20,18 +21,30 @@ const { width } = Dimensions.get("window");
 const CARD_SIZE = (width - 48) / 2; // 2 cards per row with padding
 
 export default function PhotoReviewScreen() {
-  const { farmId } = useLocalSearchParams();
+  const { farmId, treeId, treeType, datePlanted } = useLocalSearchParams();
   const router = useRouter();
-  const { photos, setPhotos, clearPhotos } = usePhotos();
+  const { photos, setPhotos, clearPhotos, treeDetails } = usePhotos();
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  const resolvedTreeId = (treeDetails.treeId || String(treeId ?? '')).trim();
+  const resolvedTreeType = (treeDetails.treeType || String(treeType ?? '')).trim();
+  const resolvedDatePlanted = (treeDetails.datePlanted || String(datePlanted ?? '')).trim();
 
   const handleBackPress = () => {
     router.push(`/(tabs)/farm-map?farmId=${farmId}`);
   };
 
   const handleAddMore = () => {
-    router.push(`/(tabs)/camera-capture?farmId=${farmId}`);
+    router.push({
+      pathname: '/(tabs)/camera-capture',
+      params: {
+        farmId: String(farmId),
+        treeId: resolvedTreeId,
+        treeType: resolvedTreeType,
+        datePlanted: resolvedDatePlanted,
+      },
+    });
   };
 
   const handleDelete = (uri: string) => {
@@ -39,6 +52,14 @@ export default function PhotoReviewScreen() {
   };
 
   const handleSubmit = async () => {
+    if (!resolvedTreeId || !resolvedTreeType || !resolvedDatePlanted) {
+      Alert.alert(
+        'Missing Tree Details',
+        'Tree ID, Tree Type, and Date Planted are required. Please go back to Add Tree and complete all fields.'
+      );
+      return;
+    }
+
     setUploading(true);
     try {
       console.log('Starting batch upload of', photos.length, 'photos');
@@ -46,7 +67,11 @@ export default function PhotoReviewScreen() {
       // Default to no disease until ML model is integrated
       const hasDisease = false;
       
-      await uploadPhotosToSupabase(supabase, photos, farmId as string, hasDisease);
+      await uploadPhotosToSupabase(supabase, photos, farmId as string, hasDisease, {
+        treeId: resolvedTreeId,
+        treeType: resolvedTreeType,
+        datePlanted: resolvedDatePlanted,
+      });
       
       alert("Photos uploaded successfully! Average location saved.");
       clearPhotos();

@@ -20,9 +20,9 @@ const ROI_LEFT = (SCREEN_WIDTH - ROI_WIDTH) / 2;
 const ROI_TOP = HEADER_HEIGHT + (AVAILABLE_HEIGHT - ROI_HEIGHT) / 2;
 
 export default function CameraCaptureScreen() {
-  const { farmId } = useLocalSearchParams();
+  const { farmId, treeId, treeType, datePlanted } = useLocalSearchParams();
   const router = useRouter();
-  const { photos, setPhotos, addPhoto } = usePhotos();
+  const { photos, setPhotos, addPhoto, treeDetails } = usePhotos();
   const [permission, requestPermission] = useCameraPermissions();
   const [locationPermission, requestLocationPermission] = Location.useForegroundPermissions();
   const cameraRef = useRef<CameraView | null>(null);
@@ -94,7 +94,19 @@ export default function CameraCaptureScreen() {
 
       // Check if we have 3 photos
       if (photos.length >= 2) {
-        router.push(`/(tabs)/photo-review?farmId=${farmId}`);
+        const resolvedTreeId = treeDetails.treeId || String(treeId ?? '');
+        const resolvedTreeType = treeDetails.treeType || String(treeType ?? '');
+        const resolvedDatePlanted = treeDetails.datePlanted || String(datePlanted ?? '');
+
+        router.push({
+          pathname: '/(tabs)/photo-review',
+          params: {
+            farmId: String(farmId),
+            treeId: resolvedTreeId,
+            treeType: resolvedTreeType,
+            datePlanted: resolvedDatePlanted,
+          },
+        });
       }
     } catch (e) {
       console.warn('Failed to take photo', e);

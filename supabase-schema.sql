@@ -1,6 +1,11 @@
 -- Add farm_id column if it doesn't exist
 ALTER TABLE geotags ADD COLUMN IF NOT EXISTS farm_id TEXT;
 
+-- Add tree metadata columns if they don't exist
+ALTER TABLE geotags ADD COLUMN IF NOT EXISTS tree_id TEXT;
+ALTER TABLE geotags ADD COLUMN IF NOT EXISTS tree_type TEXT;
+ALTER TABLE geotags ADD COLUMN IF NOT EXISTS date_planted TEXT;
+
 -- Enable RLS on existing tables
 ALTER TABLE images ENABLE ROW LEVEL SECURITY;
 ALTER TABLE geotags ENABLE ROW LEVEL SECURITY;

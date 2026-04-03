@@ -13,6 +13,7 @@ interface TreeMarker {
 interface MapComponentProps {
   markers: TreeMarker[];
   onMapPress: (event: any) => void;
+  onMarkerPress?: (marker: TreeMarker) => void;
   farmName: string;
 }
 
@@ -23,7 +24,7 @@ const FARM_REGION = {
   longitudeDelta: 0.0022,
 };
 
-export default function MapComponent({ markers, onMapPress, farmName }: MapComponentProps) {
+export default function MapComponent({ markers, onMapPress, onMarkerPress, farmName }: MapComponentProps) {
   const mapRef = useRef<MapView>(null);
 
   const handleMapReady = () => {
@@ -59,13 +60,14 @@ export default function MapComponent({ markers, onMapPress, farmName }: MapCompo
             title={marker.title}
             description={marker.hasDisease ? 'Disease detected' : 'Healthy tree'}
             pinColor={marker.hasDisease ? '#FF9800' : '#4CAF50'}
+            onPress={() => onMarkerPress?.(marker)}
           />
         ))}
       </MapView>
       {markers.length === 0 && (
         <View style={styles.emptyState}>
           <ThemedText style={styles.emptyText}>No trees added yet</ThemedText>
-          <ThemedText style={styles.emptySubtext}>Tap "Add Tree" to start</ThemedText>
+          <ThemedText style={styles.emptySubtext}>Tap Add Tree to start</ThemedText>
         </View>
       )}
     </View>

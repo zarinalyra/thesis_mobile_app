@@ -116,7 +116,12 @@ export async function uploadPhotosToSupabase(
   supabase: any,
   photos: PhotoWithExif[],
   farmId: string,
-  hasDisease: boolean = false
+  hasDisease: boolean = false,
+  treeDetails?: {
+    treeId?: string;
+    treeType?: string;
+    datePlanted?: string;
+  }
 ) {
   const uploadedFiles: string[] = [];
   try {
@@ -191,23 +196,58 @@ export async function uploadPhotosToSupabase(
 
     // Step 4: Insert ONE averaged geotag record
     console.log('Step 4: Inserting averaged geotag...');
-    const { data: geotagData, error: geotagError } = await supabase
+    const treeId = treeDetails?.treeId || null;
+    const treeType = treeDetails?.treeType || null;
+    const datePlanted = treeDetails?.datePlanted || null;
+
+    const geotagPayload = {
+      image_id: imageIds[0] ?? null,
+      latitude: avgData.latitude,
+      longitude: avgData.longitude,
+      altitude: avgData.altitude,
+      location: `SRID=4326;POINT(${avgData.longitude} ${avgData.latitude})`,
+      captured_at: avgData.timestamp,
+      farm_id: farmId,
+      raw_exif: {
+        ...avgData.rawExif,
+        farmId: farmId,
+        hasDisease: hasDisease,
+        tree_id: treeId,
+        tree_type: treeType,
+        date_planted: datePlanted,
+        image_ids: imageIds,
+        treeId,
+        treeType,
+        datePlanted,
+        imageIds,
+      },
+    };
+
+    let geotagData: any = null;
+    let geotagError: any = null;
+
+    ({ data: geotagData, error: geotagError } = await supabase
       .from('geotags')
       .insert({
-        latitude: avgData.latitude,
-        longitude: avgData.longitude,
-        altitude: avgData.altitude,
-        location: `SRID=4326;POINT(${avgData.longitude} ${avgData.latitude})`,
-        captured_at: avgData.timestamp,
-        farm_id: farmId,
-        raw_exif: {
-          ...avgData.rawExif,
-          farmId: farmId,
-          hasDisease: hasDisease,
-        },
+        ...geotagPayload,
+        tree_id: treeId,
+        tree_type: treeType,
+        date_planted: datePlanted,
       })
       .select()
-      .single();
+      .single());
+
+    if (
+      geotagError &&
+      /tree_id/i.test(geotagError.message || '') &&
+      /does not exist/i.test(geotagError.message || '')
+    ) {
+      ({ data: geotagData, error: geotagError } = await supabase
+        .from('geotags')
+        .insert(geotagPayload)
+        .select()
+        .single());
+    }
 
     if (geotagError) {
       throw new Error(`Geotag insert error: ${geotagError.message}`);

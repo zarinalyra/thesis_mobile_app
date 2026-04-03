@@ -4,10 +4,11 @@ import { View } from 'react-native';
 interface MapComponentProps {
   markers: { id: string; coordinate: { latitude: number; longitude: number }; title: string }[];
   onMapPress: (event: any) => void;
+  onMarkerPress?: (marker: { id: string; coordinate: { latitude: number; longitude: number }; title: string }) => void;
   farmName: string;
 }
 
-export default function MapComponent({ markers, onMapPress, farmName }: MapComponentProps) {
+export default function MapComponent({ markers, onMapPress, onMarkerPress, farmName }: MapComponentProps) {
   return (
     <View style={{ flex: 1 }}>
       <iframe
