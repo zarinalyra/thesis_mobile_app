@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 
 interface FarmCardMapProps {
@@ -6,9 +6,19 @@ interface FarmCardMapProps {
   farmName: string;
 }
 
+const FARM_REGION = {
+  latitude: 14.197607,
+  longitude: 120.884344,
+  latitudeDelta: 0.00045,
+  longitudeDelta: 0.00045,
+};
+
 export default function FarmCardMap({ markers, farmName }: FarmCardMapProps) {
+  const mapRef = useRef<MapView>(null);
+
   return (
     <MapView
+      ref={mapRef}
       provider={PROVIDER_GOOGLE}
       style={{ flex: 1 }}
       mapType="hybrid"
@@ -16,11 +26,9 @@ export default function FarmCardMap({ markers, farmName }: FarmCardMapProps) {
       zoomEnabled={false}
       pitchEnabled={false}
       rotateEnabled={false}
-      initialRegion={{
-        latitude: 14.1975602,
-        longitude: 120.8843819,
-        latitudeDelta: 0.0005,
-        longitudeDelta: 0.0005,
+      initialRegion={FARM_REGION}
+      onMapReady={() => {
+        mapRef.current?.animateToRegion(FARM_REGION, 300);
       }}
     >
       {markers.map((marker) => (

@@ -48,8 +48,9 @@ export function FarmCard({
 
         {/* Tree Count */}
         <View style={styles.statsRow}>
-          <ThemedText style={styles.labelText}>Total Number of Trees: </ThemedText>
-          <ThemedText style={styles.labelText}>{totalTrees} Trees</ThemedText>
+          <ThemedText style={styles.labelText}>
+            Total Number of Trees: <ThemedText style={styles.valueText}>{totalTrees} Trees</ThemedText>
+          </ThemedText>
         </View>
 
         {/* Health Indicators */}
@@ -113,8 +114,14 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  valueText: {
+    fontSize: 14,
+    color: '#000000',
+    fontFamily: 'Arial',
+    fontWeight: '600',
   },
   indicatorContainer: {
     gap: 8,

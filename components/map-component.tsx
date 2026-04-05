@@ -18,10 +18,10 @@ interface MapComponentProps {
 }
 
 const FARM_REGION = {
-  latitude: 14.1977714,
-  longitude: 120.8854955,
-  latitudeDelta: 0.0022,
-  longitudeDelta: 0.0022,
+  latitude: 14.197607,
+  longitude: 120.884344,
+  latitudeDelta: 0.0006,
+  longitudeDelta: 0.0006,
 };
 
 export default function MapComponent({ markers, onMapPress, onMarkerPress, farmName }: MapComponentProps) {
@@ -32,13 +32,12 @@ export default function MapComponent({ markers, onMapPress, onMarkerPress, farmN
   };
 
   useEffect(() => {
-    if (markers.length > 0) {
-      mapRef.current?.fitToCoordinates(
-        markers.map((m) => m.coordinate),
-        { edgePadding: { top: 80, right: 80, bottom: 80, left: 80 }, animated: true }
-      );
+    if (!mapRef.current) {
+      return;
     }
-  }, [markers]);
+
+    mapRef.current.animateToRegion(FARM_REGION, 500);
+  }, [markers.length]);
 
   return (
     <View style={styles.container}>

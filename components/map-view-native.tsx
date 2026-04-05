@@ -12,11 +12,12 @@ export default function MapViewNative({ markers, onMapPress, farmName }: MapView
     <MapView
       provider={PROVIDER_GOOGLE}
       style={{ flex: 1 }}
+      mapType="hybrid"
       initialRegion={{
-        latitude: 14.5995,
-        longitude: 120.9842,
-        latitudeDelta: 0.0922,
-        longitudeDelta: 0.0421,
+        latitude: 14.197607,
+        longitude: 120.884344,
+        latitudeDelta: 0.0022,
+        longitudeDelta: 0.0022,
       }}
       onPress={onMapPress}
       showsUserLocation
