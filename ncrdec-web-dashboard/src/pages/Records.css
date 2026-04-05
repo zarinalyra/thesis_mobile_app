@@ -1,0 +1,160 @@
+.records-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.records-container {
+  display: grid;
+  grid-template-columns: 1fr 350px;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.records-list {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.search-box {
+  padding: 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.search-box input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  outline: none;
+}
+
+.search-box input:focus {
+  border-color: #2e7d32;
+  box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.1);
+}
+
+.records-table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: auto;
+}
+
+.records-table thead {
+  background: #f5f5f5;
+  position: sticky;
+  top: 0;
+}
+
+.records-table th {
+  text-align: left;
+  padding: 12px;
+  font-weight: 600;
+  color: #1b5e20;
+  font-size: 14px;
+  border-bottom: 1px solid #ddd;
+}
+
+.records-table tbody {
+  overflow-y: auto;
+}
+
+.records-table td {
+  padding: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 13px;
+  color: #333;
+}
+
+.records-table tr {
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.records-table tr:hover {
+  background: #f9f9f9;
+}
+
+.records-table tr.active {
+  background: #e8f5e9;
+}
+
+.view-btn {
+  padding: 4px 8px;
+  background: #2e7d32;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.view-btn:hover {
+  background: #1b5e20;
+}
+
+.no-data {
+  text-align: center;
+  color: #999;
+  padding: 40px 12px !important;
+}
+
+/* Tree Details Panel */
+.tree-details-panel {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.tree-details-panel h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1b5e20;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.details-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.details-section h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2e7d32;
+  margin-bottom: 4px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.detail-row .label {
+  color: #666;
+  font-weight: 500;
+}
+
+.detail-row .value {
+  color: #333;
+  text-align: right;
+  flex: 1;
+  margin-left: 8px;
+}
