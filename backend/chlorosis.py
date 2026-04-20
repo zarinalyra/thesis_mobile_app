@@ -49,7 +49,7 @@ def segment_leaf(img_bgr):
     gc_mask   = np.zeros((h, w), np.uint8)
 
     try:
-        cv2.grabCut(img_bgr, gc_mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
+        cv2.grabCut(img_bgr, gc_mask, rect, bgd_model, fgd_model, 2, cv2.GC_INIT_WITH_RECT)
         gc_fg = np.where(
             (gc_mask == cv2.GC_FGD) | (gc_mask == cv2.GC_PR_FGD), 255, 0
         ).astype(np.uint8)

@@ -20,8 +20,9 @@ import numpy as np
 app = Flask(__name__)
 
 # Maximum dimension for any side of the image before processing.
-# Keeps memory usage under ~150 MB per image on Render's free tier.
-MAX_IMAGE_DIM = 800
+# 480px is sufficient for color-based chlorosis detection and keeps
+# GrabCut fast enough to finish within Render's 30s worker timeout.
+MAX_IMAGE_DIM = 480
 
 
 # =============================================================================
