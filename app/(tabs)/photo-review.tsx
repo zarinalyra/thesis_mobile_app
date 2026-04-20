@@ -150,33 +150,35 @@ export default function PhotoReviewScreen() {
       }
 
       // ── STEP 3: Save analysis results with image IDs ────────
-      if (analysisResult) {
-        setStatusMessage("Saving analysis results...");
-        console.log("Saving analysis results...");
+      // Always save this row so that images are always linked to the
+      // inspection in the tree details card, even when Flask is unavailable.
+      setStatusMessage("Saving analysis results...");
+      console.log("Saving analysis results...");
 
-        const { error: analysisError } = await supabase
-          .from("analysis_results")
-          .insert({
-            tree_id: resolvedTreeId,
-            farm_id: farmId,
-            geotag_id: geotagId,
-            inspection_date: analysisResult.inspection_date,
-            diseases_detected: analysisResult.detection.diseases_detected,
-            pests_detected: analysisResult.detection.pests_detected,
-            confidence: analysisResult.detection.confidence,
-            chlorosis_readings: analysisResult.chlorosis_readings,
-            // Store which images belong to THIS inspection
-            image_ids: inspectionImageIds,
-          });
+      const { error: analysisError } = await supabase
+        .from("analysis_results")
+        .insert({
+          tree_id: resolvedTreeId,
+          farm_id: farmId,
+          geotag_id: geotagId,
+          inspection_date:
+            analysisResult?.inspection_date ??
+            new Date().toISOString().slice(0, 10),
+          diseases_detected: analysisResult?.detection.diseases_detected ?? [],
+          pests_detected: analysisResult?.detection.pests_detected ?? [],
+          confidence: analysisResult?.detection.confidence ?? 0,
+          chlorosis_readings: analysisResult?.chlorosis_readings ?? [],
+          // Always store which images belong to this inspection
+          image_ids: inspectionImageIds,
+        });
 
-        if (analysisError) {
-          console.warn("Analysis save failed:", analysisError.message);
-        } else {
-          console.log(
-            "Analysis results saved with image IDs:",
-            inspectionImageIds,
-          );
-        }
+      if (analysisError) {
+        console.warn("Analysis save failed:", analysisError.message);
+      } else {
+        console.log(
+          "Analysis results saved with image IDs:",
+          inspectionImageIds,
+        );
       }
 
       // ── DONE ────────────────────────────────────────────────
