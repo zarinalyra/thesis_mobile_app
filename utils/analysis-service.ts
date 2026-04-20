@@ -16,7 +16,7 @@ import { PhotoWithExif } from "./exif-extractor";
 // Home WiFi:  http://192.168.1.19:5000
 // Hotspot:    http://192.168.43.XXX:5000  (check ipconfig)
 // ─────────────────────────────────────────────────────────────
-export const FLASK_SERVER_URL = "http://192.168.1.19:5000"; // ← UPDATE IF ON HOTSPOT
+export const FLASK_SERVER_URL = "https://thesis-mobile-app-v15u.onrender.com"; // ← UPDATE IF ON HOTSPOT
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
