@@ -4,17 +4,16 @@ server.py
 Flask backend server for the Coffee Leaf Disease Monitoring App.
 
 Endpoints:
-    POST /analyze   — receives 3+ leaf images, runs chlorosis computation
-                      on each, returns per-image results back to the mobile app.
+    POST /analyze   — receives 3+ image URLs, downloads each image,
+                      runs chlorosis computation, returns per-image results.
 
-This server is intended to run on Google Colab (or any Python host).
-The SWAT-DCNN inference call is marked with a placeholder — plug in
-your existing model inference function there.
+    GET  /          — health check
 """
 
 from flask import Flask, request, jsonify
 from datetime import date
 from chlorosis import compute_chlorosis_from_bytes
+import urllib.request
 
 app = Flask(__name__)
 
@@ -23,29 +22,6 @@ app = Flask(__name__)
 # PLACEHOLDER — replace this with your actual SWAT-DCNN inference function
 # =============================================================================
 def run_swat_dcnn(image_bytes: bytes) -> dict:
-    """
-    Run SWAT-DCNN inference on a single image.
-
-    Replace the body of this function with your actual model call.
-    Expected return format:
-        {
-            "stage1": "Unhealthy",
-            "stage2": "Brown Spot Lesions",
-            "stage3": "Cercospora Leaf Spots",
-            "confidence": 0.91
-        }
-    """
-    # ── PLUG YOUR MODEL HERE ──────────────────────────────────────────────────
-    # Example (pseudocode):
-    #   img_tensor = preprocess(image_bytes)
-    #   stage1_out = stage1_model.predict(img_tensor)
-    #   if stage1_out == "Unhealthy":
-    #       stage2_out = stage2_model.predict(img_tensor)
-    #       ...
-    #   return { "stage1": ..., "stage2": ..., "stage3": ..., "confidence": ... }
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # Temporary placeholder return so the server runs without the model:
     return {
         "stage1":     "Healthy",
         "stage2":     None,
@@ -58,23 +34,10 @@ def run_swat_dcnn(image_bytes: bytes) -> dict:
 # HELPER — pick the best SWAT-DCNN result across all images
 # =============================================================================
 def pick_best_detection(detections: list) -> dict:
-    """
-    From a list of SWAT-DCNN results (one per image),
-    return the one with the highest confidence score.
-
-    If all images are Healthy, returns a Healthy result.
-    If any image is Unhealthy, prioritizes the most confident
-    Unhealthy detection — because missing a disease is worse
-    than a false positive.
-    """
-    # Separate healthy vs unhealthy detections
     unhealthy = [d for d in detections if d["stage1"] == "Unhealthy"]
-
     if unhealthy:
-        # Return the unhealthy detection with the highest confidence
         return max(unhealthy, key=lambda d: d["confidence"])
     else:
-        # All healthy — return the one with highest confidence
         return max(detections, key=lambda d: d["confidence"])
 
 
@@ -84,24 +47,27 @@ def pick_best_detection(detections: list) -> dict:
 @app.route("/analyze", methods=["POST"])
 def analyze():
     """
-    Receives 3+ leaf images from the mobile app.
-    Runs chlorosis computation on EACH image.
-    Runs SWAT-DCNN on EACH image and picks the best detection result.
-    Returns per-image chlorosis readings + one disease/pest detection.
+    Receives a JSON body with tree_id and a list of image URLs.
+    Downloads each image, runs chlorosis and SWAT-DCNN.
 
-    Expected request:
-        multipart/form-data
-        files: image_1, image_2, image_3, ... (at least 3)
-        form:  tree_id (string)
+    Expected request (JSON):
+        {
+            "tree_id": "T-001",
+            "image_urls": [
+                "https://...supabase.co/.../image1.jpg",
+                "https://...supabase.co/.../image2.jpg",
+                "https://...supabase.co/.../image3.jpg"
+            ]
+        }
 
     Returns JSON:
         {
             "tree_id": "T-001",
-            "inspection_date": "2026-04-18",
+            "inspection_date": "2026-04-20",
             "detection": {
-                "diseases_detected": ["Coffee Leaf Rust"],
+                "diseases_detected": [],
                 "pests_detected": [],
-                "confidence": 0.91
+                "confidence": 0.0
             },
             "chlorosis_readings": [
                 {"image_id": 1, "chlorosis_percentage": 3.00, "valid": true},
@@ -111,29 +77,30 @@ def analyze():
         }
     """
 
-    # --- Validate tree_id ---
-    tree_id = request.form.get("tree_id")
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON body required."}), 400
+
+    tree_id = data.get("tree_id")
     if not tree_id:
         return jsonify({"error": "tree_id is required."}), 400
 
-    # --- Collect uploaded images ---
-    # Mobile app sends them as image_1, image_2, image_3, etc.
-    images = []
-    index  = 1
-    while f"image_{index}" in request.files:
-        images.append(request.files[f"image_{index}"].read())
-        index += 1
+    image_urls = data.get("image_urls", [])
+    if len(image_urls) < 3:
+        return jsonify({"error": "At least 3 image URLs are required."}), 400
 
-    if len(images) < 3:
-        return jsonify({"error": "At least 3 images are required."}), 400
-
-    # --- Process each image ---
+    # --- Download and process each image ---
     chlorosis_readings = []
     swat_results       = []
 
-    for i, image_bytes in enumerate(images, start=1):
+    for i, url in enumerate(image_urls, start=1):
+        try:
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                image_bytes = resp.read()
+        except Exception as e:
+            return jsonify({"error": f"Failed to download image {i}: {str(e)}"}), 500
 
-        # 1. Chlorosis computation
+        # Chlorosis computation
         chlorosis_result = compute_chlorosis_from_bytes(image_bytes)
         chlorosis_readings.append({
             "image_id":             i,
@@ -141,18 +108,14 @@ def analyze():
             "valid":                chlorosis_result["valid"],
         })
 
-        # 2. SWAT-DCNN inference
+        # SWAT-DCNN inference
         swat_result = run_swat_dcnn(image_bytes)
         swat_results.append(swat_result)
 
     # --- Pick best SWAT-DCNN result ---
     best_detection = pick_best_detection(swat_results)
 
-    # --- Format diseases and pests from best detection ---
-    # Stage 2 tells us the broad category, Stage 3 tells us the specific condition.
-    # We separate them into diseases vs pests based on known labels.
     PEST_LABELS = {"Coffee Leaf Miner", "Red Spider Mite"}
-
     diseases_detected = []
     pests_detected    = []
 
@@ -164,7 +127,6 @@ def analyze():
         else:
             diseases_detected.append(label)
 
-    # --- Build response ---
     response = {
         "tree_id":         tree_id,
         "inspection_date": str(date.today()),
@@ -180,7 +142,7 @@ def analyze():
 
 
 # =============================================================================
-# HEALTH CHECK — useful for confirming the server is alive
+# HEALTH CHECK
 # =============================================================================
 @app.route("/", methods=["GET"])
 def health_check():
@@ -191,6 +153,4 @@ def health_check():
 # RUN
 # =============================================================================
 if __name__ == "__main__":
-    # For Colab: use ngrok or similar to expose this port publicly
-    # For local testing: just run python server.py
     app.run(host="0.0.0.0", port=5000, debug=True)

@@ -1,28 +1,18 @@
 /**
  * analysis-service.ts
  * -------------------
- * Sends captured leaf images to the Flask backend server
- * for chlorosis computation and SWAT-DCNN disease/pest detection.
- *
- * Uses React Native compatible FormData image upload.
- * Note: base64 Blob creation is NOT supported in React Native —
- * we use the { uri, type, name } object format instead.
+ * Sends Supabase image URLs to the Flask backend for chlorosis analysis.
+ * Flask downloads the images itself — this avoids multipart upload issues
+ * on Render's free tier proxy.
  */
 
-import { PhotoWithExif } from "./exif-extractor";
 
-// ─────────────────────────────────────────────────────────────
-// CONFIG — update this to your laptop's IP
-// Home WiFi:  http://192.168.1.19:5000
-// Hotspot:    http://192.168.43.XXX:5000  (check ipconfig)
-// ─────────────────────────────────────────────────────────────
-export const FLASK_SERVER_URL = "https://thesis-mobile-app-v15u.onrender.com"; // ← UPDATE IF ON HOTSPOT
+export const FLASK_SERVER_URL = "https://thesis-mobile-app-v15u.onrender.com";
 
 // How long to wait for Flask before giving up (90 seconds).
-// Render free tier can take 50+ seconds to wake from sleep.
 const TIMEOUT_MS = 90000;
 
-// How many times to attempt the request before failing.
+// How many times to attempt before failing.
 const MAX_RETRIES = 2;
 
 // ─────────────────────────────────────────────────────────────
@@ -48,8 +38,6 @@ export interface AnalysisResult {
 // ─────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────
-
-// Wraps fetch with an AbortController timeout.
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
@@ -70,32 +58,20 @@ async function fetchWithTimeout(
 
 // ─────────────────────────────────────────────────────────────
 // MAIN FUNCTION
+// Takes public Supabase URLs of already-uploaded images
+// and sends them to Flask as JSON.
 // ─────────────────────────────────────────────────────────────
 export async function analyzeLeafImages(
-  photos: PhotoWithExif[],
+  imageUrls: string[],
   treeId: string,
 ): Promise<AnalysisResult> {
-  if (photos.length < 3) {
-    throw new Error("At least 3 images are required for analysis.");
+  if (imageUrls.length < 3) {
+    throw new Error("At least 3 image URLs are required for analysis.");
   }
 
   console.log(
-    `Sending ${photos.length} images to Flask at ${FLASK_SERVER_URL}`,
+    `Sending ${imageUrls.length} image URLs to Flask at ${FLASK_SERVER_URL}`,
   );
-
-  // React Native FormData supports { uri, type, name } directly.
-  // Do NOT use Blob or ArrayBuffer — not supported in RN.
-  const formData = new FormData();
-  formData.append("tree_id", treeId);
-
-  for (let i = 0; i < photos.length; i++) {
-    const photo = photos[i];
-    formData.append(`image_${i + 1}`, {
-      uri: photo.uri,
-      type: "image/jpeg",
-      name: `image_${i + 1}.jpg`,
-    } as any);
-  }
 
   let lastError: Error = new Error("Unknown error");
 
@@ -107,12 +83,14 @@ export async function analyzeLeafImages(
         `${FLASK_SERVER_URL}/analyze`,
         {
           method: "POST",
-          body: formData,
           headers: {
-            // Do NOT manually set Content-Type for multipart —
-            // React Native sets it automatically with the correct boundary.
+            "Content-Type": "application/json",
             Accept: "application/json",
           },
+          body: JSON.stringify({
+            tree_id: treeId,
+            image_urls: imageUrls,
+          }),
         },
         TIMEOUT_MS,
       );
@@ -132,10 +110,11 @@ export async function analyzeLeafImages(
         console.warn(
           `Flask attempt ${attempt} failed: ${err.message}. Retrying...`,
         );
-        // Wait 3 seconds before retrying to give the server more wake-up time.
         await new Promise((resolve) => setTimeout(resolve, 3000));
       } else {
-        console.warn(`Flask attempt ${attempt} failed: ${err.message}. Giving up.`);
+        console.warn(
+          `Flask attempt ${attempt} failed: ${err.message}. Giving up.`,
+        );
       }
     }
   }

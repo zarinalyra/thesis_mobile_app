@@ -82,38 +82,17 @@ export default function PhotoReviewScreen() {
 
     setUploading(true);
     try {
-      // ── STEP 1: Flask analysis ──────────────────────────────
-      setStatusMessage("Analyzing leaf images...");
-      console.log("=== FLASK CALL START ===");
-      console.log("Flask URL:", FLASK_SERVER_URL);
-      console.log("Tree ID:", resolvedTreeId);
-      console.log("Is update:", isUpdateFlow);
-
-      let analysisResult = null;
-      let hasDisease = false;
-
-      try {
-        analysisResult = await analyzeLeafImages(photos, resolvedTreeId);
-        console.log("Flask result:", JSON.stringify(analysisResult));
-        hasDisease =
-          analysisResult.detection.diseases_detected.length > 0 ||
-          analysisResult.detection.pests_detected.length > 0;
-      } catch (err: any) {
-        console.warn("Flask failed:", err.message);
-        analysisResult = null;
-        hasDisease = false;
-      }
-      console.log("=== FLASK CALL END ===");
-
-      // ── STEP 2: Upload images ───────────────────────────────
+      // ── STEP 1: Upload images to Supabase first ─────────────
+      // Upload before calling Flask so we can pass public URLs
+      // to Flask instead of raw files. This avoids the multipart
+      // upload being blocked by Render's free tier proxy.
       setStatusMessage("Uploading photos...");
 
       let geotagId: number | null = null;
-      // imageIds for THIS inspection — used to display only current inspection images
       let inspectionImageIds: number[] = [];
+      let inspectionImageUrls: string[] = [];
 
       if (isUpdateFlow) {
-        // UPDATE — images only, no new geotag, GPS unchanged
         console.log("Update flow — uploading images only");
         inspectionImageIds = await uploadImagesOnlyToSupabase(
           supabase,
@@ -122,13 +101,12 @@ export default function PhotoReviewScreen() {
         );
         console.log("Update image IDs:", inspectionImageIds);
       } else {
-        // ADD TREE — full upload with GPS averaging and geotag
         console.log("Add tree flow — uploading with geotag");
         const geotagData = await uploadPhotosToSupabase(
           supabase,
           photos,
           farmId as string,
-          hasDisease,
+          false,
           {
             treeId: resolvedTreeId,
             treeType: resolvedTreeType,
@@ -137,7 +115,6 @@ export default function PhotoReviewScreen() {
         );
         geotagId = geotagData?.id ?? null;
 
-        // Extract image IDs from raw_exif stored by uploadPhotosToSupabase
         const rawExif = geotagData?.raw_exif as any;
         inspectionImageIds = Array.isArray(rawExif?.image_ids)
           ? rawExif.image_ids
@@ -149,9 +126,48 @@ export default function PhotoReviewScreen() {
         console.log("Add tree image IDs:", inspectionImageIds);
       }
 
-      // ── STEP 3: Save analysis results with image IDs ────────
-      // Always save this row so that images are always linked to the
-      // inspection in the tree details card, even when Flask is unavailable.
+      // Build public Supabase URLs for the uploaded images
+      if (inspectionImageIds.length > 0) {
+        const { data: imageRows } = await supabase
+          .from("images")
+          .select("id, file_path")
+          .in("id", inspectionImageIds);
+
+        if (imageRows && imageRows.length > 0) {
+          inspectionImageUrls = inspectionImageIds
+            .map((id: number) => imageRows.find((r: any) => r.id === id))
+            .filter(Boolean)
+            .map(
+              (r: any) =>
+                supabase.storage.from("leafImages").getPublicUrl(r.file_path)
+                  .data.publicUrl,
+            );
+          console.log("Image URLs for Flask:", inspectionImageUrls);
+        }
+      }
+
+      // ── STEP 2: Flask analysis using URLs ──────────────────
+      setStatusMessage("Analyzing leaf images...");
+      console.log("=== FLASK CALL START ===");
+      console.log("Flask URL:", FLASK_SERVER_URL);
+      console.log("Tree ID:", resolvedTreeId);
+
+      let analysisResult = null;
+
+      try {
+        analysisResult = await analyzeLeafImages(
+          inspectionImageUrls,
+          resolvedTreeId,
+        );
+        console.log("Flask result:", JSON.stringify(analysisResult));
+      } catch (err: any) {
+        console.warn("Flask failed:", err.message);
+        analysisResult = null;
+      }
+      console.log("=== FLASK CALL END ===");
+
+      // ── STEP 3: Save analysis results ──────────────────────
+      // Always save so images are always linked even if Flask failed.
       setStatusMessage("Saving analysis results...");
       console.log("Saving analysis results...");
 
@@ -168,7 +184,6 @@ export default function PhotoReviewScreen() {
           pests_detected: analysisResult?.detection.pests_detected ?? [],
           confidence: analysisResult?.detection.confidence ?? 0,
           chlorosis_readings: analysisResult?.chlorosis_readings ?? [],
-          // Always store which images belong to this inspection
           image_ids: inspectionImageIds,
         });
 
@@ -181,7 +196,7 @@ export default function PhotoReviewScreen() {
         );
       }
 
-      // ── DONE ────────────────────────────────────────────────
+      // ── DONE ───────────────────────────────────────────────
       setStatusMessage("");
       alert(
         isUpdateFlow
