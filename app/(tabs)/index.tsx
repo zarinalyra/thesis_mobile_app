@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+} from "react-native";
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { FarmCard } from '@/components/farm-card';
-import { supabase } from '@/supabase';
+import { FarmCard } from "@/components/farm-card";
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
+import { supabase } from "@/supabase";
 
 interface FarmSummary {
   farmId: string;
@@ -27,7 +32,7 @@ function normalizeRawExif(rawExif: unknown): Record<string, any> {
     return {};
   }
 
-  if (typeof rawExif === 'string') {
+  if (typeof rawExif === "string") {
     try {
       return JSON.parse(rawExif);
     } catch {
@@ -35,7 +40,7 @@ function normalizeRawExif(rawExif: unknown): Record<string, any> {
     }
   }
 
-  if (typeof rawExif === 'object') {
+  if (typeof rawExif === "object") {
     return rawExif as Record<string, any>;
   }
 
@@ -51,21 +56,20 @@ export default function HomeScreen() {
     try {
       setErrorMessage(null);
 
-      const withTreeColumnsSelect = 'id, farm_id, tree_id, raw_exif, captured_at';
-      const legacySelect = 'id, farm_id, raw_exif, captured_at';
+      const withTreeColumnsSelect =
+        "id, farm_id, tree_id, raw_exif, captured_at";
+      const legacySelect = "id, farm_id, raw_exif, captured_at";
 
       let { data, error } = await supabase
-        .from('geotags')
+        .from("geotags")
         .select(withTreeColumnsSelect);
 
       if (
         error &&
-        /tree_id/i.test(error.message || '') &&
-        /does not exist/i.test(error.message || '')
+        /tree_id/i.test(error.message || "") &&
+        /does not exist/i.test(error.message || "")
       ) {
-        ({ data, error } = await supabase
-          .from('geotags')
-          .select(legacySelect));
+        ({ data, error } = await supabase.from("geotags").select(legacySelect));
       }
 
       if (error) {
@@ -73,19 +77,26 @@ export default function HomeScreen() {
       }
 
       const rows = (data || []) as GeotagRow[];
-      const latestByTree = new Map<string, {
-        farmId: string;
-        treeId: string;
-        capturedAt: string;
-        hasDisease: boolean;
-      }>();
+      const latestByTree = new Map<
+        string,
+        {
+          farmId: string;
+          treeId: string;
+          capturedAt: string;
+          hasDisease: boolean;
+        }
+      >();
 
       for (const row of rows) {
         const rawExif = normalizeRawExif(row.raw_exif);
-        const farmId = String(row.farm_id || rawExif.farm_id || '01');
-        const treeId = String(row.tree_id || rawExif.tree_id || rawExif.treeId || row.id);
-        const capturedAt = row.captured_at || '';
-        const hasDisease = Boolean(rawExif.has_disease || rawExif.hasDisease || false);
+        const farmId = String(row.farm_id || rawExif.farm_id || "01");
+        const treeId = String(
+          row.tree_id || rawExif.tree_id || rawExif.treeId || row.id,
+        );
+        const capturedAt = row.captured_at || "";
+        const hasDisease = Boolean(
+          rawExif.has_disease || rawExif.hasDisease || false,
+        );
         const mapKey = `${farmId}::${treeId}`;
 
         const existing = latestByTree.get(mapKey);
@@ -123,17 +134,20 @@ export default function HomeScreen() {
       }
 
       const summaries = Array.from(farmSummaryMap.values()).sort((a, b) =>
-        a.farmId.localeCompare(b.farmId, undefined, { numeric: true, sensitivity: 'base' })
+        a.farmId.localeCompare(b.farmId, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
       );
 
       setFarmData(summaries);
     } catch (error: any) {
-      const message = String(error?.message || error || 'Unknown error');
+      const message = String(error?.message || error || "Unknown error");
       const isNetworkError = /network request failed/i.test(message);
       setErrorMessage(
         isNetworkError
-          ? 'Cannot reach server right now. Please check your internet and try again.'
-          : 'Failed to load dashboard data. Please try again.'
+          ? "Cannot reach server right now. Please check your internet and try again."
+          : "Failed to load dashboard data. Please try again.",
       );
     } finally {
       setIsLoading(false);
@@ -146,10 +160,14 @@ export default function HomeScreen() {
 
   useEffect(() => {
     const channel = supabase
-      .channel('dashboard-geotags-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'geotags' }, () => {
-        fetchFarmSummaries();
-      })
+      .channel("dashboard-geotags-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "geotags" },
+        () => {
+          fetchFarmSummaries();
+        },
+      )
       .subscribe();
 
     return () => {
@@ -157,12 +175,20 @@ export default function HomeScreen() {
     };
   }, [fetchFarmSummaries]);
 
-  const hasNoData = useMemo(() => !isLoading && farmData.length === 0 && !errorMessage, [isLoading, farmData.length, errorMessage]);
+  const hasNoData = useMemo(
+    () => !isLoading && farmData.length === 0 && !errorMessage,
+    [isLoading, farmData.length, errorMessage],
+  );
 
   return (
-    <ThemedView style={[styles.container, { backgroundColor: '#CFE1CC' }]}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <ThemedView style={[styles.farmsContainer, { backgroundColor: '#CFE1CC' }]}>
+    <ThemedView style={[styles.container, { backgroundColor: "#CFE1CC" }]}>
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+      >
+        <ThemedView
+          style={[styles.farmsContainer, { backgroundColor: "#CFE1CC" }]}
+        >
           {isLoading && (
             <ThemedView style={styles.centeredMessage}>
               <ActivityIndicator size="large" color="#4CAF50" />
@@ -172,27 +198,36 @@ export default function HomeScreen() {
           {!isLoading && errorMessage && (
             <ThemedView style={styles.centeredMessage}>
               <ThemedText style={styles.errorText}>{errorMessage}</ThemedText>
-              <Pressable style={styles.retryButton} onPress={fetchFarmSummaries}>
+              <Pressable
+                style={styles.retryButton}
+                onPress={fetchFarmSummaries}
+              >
                 <ThemedText style={styles.retryText}>Retry</ThemedText>
               </Pressable>
             </ThemedView>
           )}
 
-          {!isLoading && !errorMessage && farmData.map((farm) => (
-            <FarmCard
-              key={farm.farmId}
-              farmId={farm.farmId}
-              farmName={farm.farmName}
-              totalTrees={farm.totalTrees}
-              healthyTrees={farm.healthyTrees}
-              diseasedTrees={farm.diseasedTrees}
-            />
-          ))}
+          {!isLoading &&
+            !errorMessage &&
+            farmData.map((farm) => (
+              <FarmCard
+                key={farm.farmId}
+                farmId={farm.farmId}
+                farmName={farm.farmName}
+                totalTrees={farm.totalTrees}
+                healthyTrees={farm.healthyTrees}
+                diseasedTrees={farm.diseasedTrees}
+              />
+            ))}
 
           {hasNoData && (
-            <ThemedView style={styles.centeredMessage}>
-              <ThemedText style={styles.emptyText}>No tree data yet.</ThemedText>
-            </ThemedView>
+            <FarmCard
+              farmId="01"
+              farmName="Farm-01"
+              totalTrees={0}
+              healthyTrees={0}
+              diseasedTrees={0}
+            />
           )}
         </ThemedView>
       </ScrollView>
@@ -213,29 +248,29 @@ const styles = StyleSheet.create({
     paddingBottom: 50,
   },
   centeredMessage: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     paddingVertical: 24,
     gap: 12,
-    backgroundColor: '#CFE1CC',
+    backgroundColor: "#CFE1CC",
   },
   errorText: {
     fontSize: 14,
-    color: '#8b1d1d',
-    textAlign: 'center',
+    color: "#8b1d1d",
+    textAlign: "center",
   },
   retryButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 6,
   },
   retryText: {
-    color: '#111111',
-    fontWeight: '700',
+    color: "#111111",
+    fontWeight: "700",
   },
   emptyText: {
     fontSize: 14,
-    color: '#333333',
+    color: "#333333",
   },
 });

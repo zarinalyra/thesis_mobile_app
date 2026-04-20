@@ -1,16 +1,21 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Pressable, Text, Dimensions, Animated } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as Location from 'expo-location';
-import * as Haptics from 'expo-haptics';
-import * as ImageManipulator from 'expo-image-manipulator';
-import { ThemedText } from '@/components/themed-text';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { extractExifData } from '@/utils/exif-extractor';
-import { usePhotos } from '@/context/PhotoContext';
+import { ThemedText } from "@/components/themed-text";
+import { IconSymbol } from "@/components/ui/icon-symbol";
+import { usePhotos } from "@/context/PhotoContext";
+import { extractExifData } from "@/utils/exif-extractor";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useRef } from "react";
+import {
+  Animated,
+  Dimensions,
+  Pressable,
+  StyleSheet,
+  View
+} from "react-native";
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const HEADER_HEIGHT = 100;
 const BOTTOM_CONTROLS = 250;
 const AVAILABLE_HEIGHT = SCREEN_HEIGHT - HEADER_HEIGHT - BOTTOM_CONTROLS;
@@ -20,11 +25,14 @@ const ROI_LEFT = (SCREEN_WIDTH - ROI_WIDTH) / 2;
 const ROI_TOP = HEADER_HEIGHT + (AVAILABLE_HEIGHT - ROI_HEIGHT) / 2;
 
 export default function CameraCaptureScreen() {
-  const { farmId, treeId, treeType, datePlanted } = useLocalSearchParams();
+  // ── isUpdate tells us if this is an Update Card flow or Add Tree flow ──
+  const { farmId, treeId, treeType, datePlanted, isUpdate } =
+    useLocalSearchParams();
   const router = useRouter();
   const { photos, setPhotos, addPhoto, treeDetails } = usePhotos();
   const [permission, requestPermission] = useCameraPermissions();
-  const [locationPermission, requestLocationPermission] = Location.useForegroundPermissions();
+  const [locationPermission, requestLocationPermission] =
+    Location.useForegroundPermissions();
   const cameraRef = useRef<CameraView | null>(null);
   const flashAnim = useRef(new Animated.Value(0)).current;
 
@@ -42,24 +50,32 @@ export default function CameraCaptureScreen() {
     try {
       // Haptic feedback
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      
+
       // Flash effect
       Animated.sequence([
-        Animated.timing(flashAnim, { toValue: 1, duration: 80, useNativeDriver: true }),
-        Animated.timing(flashAnim, { toValue: 0, duration: 80, useNativeDriver: true }),
+        Animated.timing(flashAnim, {
+          toValue: 1,
+          duration: 80,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flashAnim, {
+          toValue: 0,
+          duration: 80,
+          useNativeDriver: true,
+        }),
       ]).start();
 
       // Capture photo
-      const result = await cameraRef.current.takePictureAsync({ 
-        quality: 0.8, 
-        exif: true
+      const result = await cameraRef.current.takePictureAsync({
+        quality: 0.8,
+        exif: true,
       });
 
-      // Add photo to list (skip cropping for now due to rotation issues)
-      const placeholderPhoto = { 
-        uri: result.uri, 
+      // Add photo to list
+      const placeholderPhoto = {
+        uri: result.uri,
         exif: { timestamp: new Date().toISOString() },
-        location: undefined as any
+        location: undefined as any,
       };
       addPhoto(placeholderPhoto);
 
@@ -78,9 +94,9 @@ export default function CameraCaptureScreen() {
               accuracy: location.coords.accuracy,
             };
             placeholderPhoto.location = freshLocation;
-            console.log('Captured device location:', freshLocation);
+            console.log("Captured device location:", freshLocation);
           } catch (err) {
-            console.warn('Failed to get location:', err);
+            console.warn("Failed to get location:", err);
           }
         }
 
@@ -88,28 +104,30 @@ export default function CameraCaptureScreen() {
           const exif = await extractExifData(result, freshLocation);
           placeholderPhoto.exif = exif;
         } catch (err) {
-          console.warn('Failed to extract EXIF:', err);
+          console.warn("Failed to extract EXIF:", err);
         }
       })();
 
-      // Check if we have 3 photos
+      // Navigate to photo-review after 3 photos
       if (photos.length >= 2) {
-        const resolvedTreeId = treeDetails.treeId || String(treeId ?? '');
-        const resolvedTreeType = treeDetails.treeType || String(treeType ?? '');
-        const resolvedDatePlanted = treeDetails.datePlanted || String(datePlanted ?? '');
+        const resolvedTreeId = treeDetails.treeId || String(treeId ?? "");
+        const resolvedTreeType = treeDetails.treeType || String(treeType ?? "");
+        const resolvedDatePlanted =
+          treeDetails.datePlanted || String(datePlanted ?? "");
 
         router.push({
-          pathname: '/(tabs)/photo-review',
+          pathname: "/(tabs)/photo-review",
           params: {
             farmId: String(farmId),
             treeId: resolvedTreeId,
             treeType: resolvedTreeType,
             datePlanted: resolvedDatePlanted,
+            isUpdate: String(isUpdate ?? "false"), // ← pass through to photo-review
           },
         });
       }
     } catch (e) {
-      console.warn('Failed to take photo', e);
+      console.warn("Failed to take photo", e);
     }
   };
 
@@ -120,7 +138,9 @@ export default function CameraCaptureScreen() {
           Camera access is required to capture photos.
         </ThemedText>
         <Pressable style={styles.permissionButton} onPress={requestPermission}>
-          <ThemedText style={styles.permissionButtonText}>Grant Permission</ThemedText>
+          <ThemedText style={styles.permissionButtonText}>
+            Grant Permission
+          </ThemedText>
         </Pressable>
       </View>
     );
@@ -133,22 +153,22 @@ export default function CameraCaptureScreen() {
         <Pressable style={styles.backButton} onPress={handleBackPress}>
           <IconSymbol name="map" size={24} color="#000" />
         </Pressable>
-        <ThemedText style={styles.headerTitle}>Add New Tree to Farm-{farmId}</ThemedText>
+        <ThemedText style={styles.headerTitle}>
+          {isUpdate === "true"
+            ? `Update Tree ${treeId}`
+            : `Add New Tree to Farm-${farmId}`}
+        </ThemedText>
         <View style={styles.spacer} />
       </View>
 
       {/* Camera Preview */}
       <View style={styles.cameraContainer}>
-        <CameraView
-          ref={cameraRef}
-          style={styles.camera}
-          facing="back"
-        />
-        
+        <CameraView ref={cameraRef} style={styles.camera} facing="back" />
+
         {/* ROI Overlay */}
         <View style={styles.overlay}>
           <View style={[styles.darkRegion, { height: ROI_TOP }]} />
-          <View style={{ flexDirection: 'row', height: ROI_HEIGHT }}>
+          <View style={{ flexDirection: "row", height: ROI_HEIGHT }}>
             <View style={[styles.darkRegion, { width: ROI_LEFT }]} />
             <View style={styles.roiBox}>
               <View style={[styles.corner, styles.topLeft]} />
@@ -167,7 +187,12 @@ export default function CameraCaptureScreen() {
             Place one coffee leaf inside the box
           </ThemedText>
         </View>
-        <View style={[styles.subInstructionContainer, { top: ROI_TOP + ROI_HEIGHT + 12 }]}>
+        <View
+          style={[
+            styles.subInstructionContainer,
+            { top: ROI_TOP + ROI_HEIGHT + 12 },
+          ]}
+        >
           <ThemedText style={styles.subInstructionText}>
             Ensure the leaf fills the frame and avoid overlapping leaves
           </ThemedText>
@@ -175,19 +200,21 @@ export default function CameraCaptureScreen() {
 
         <View style={styles.overlayBottom}>
           <ThemedText style={styles.counterText}>{photos.length}/3</ThemedText>
-          <Pressable 
-            style={styles.shutterButton} 
-            onPress={handleCapture}
-          >
+          <Pressable style={styles.shutterButton} onPress={handleCapture}>
             {({ pressed }) => (
-              <View style={[styles.shutterInner, pressed && styles.shutterInnerPressed]} />
+              <View
+                style={[
+                  styles.shutterInner,
+                  pressed && styles.shutterInnerPressed,
+                ]}
+              />
             )}
           </Pressable>
         </View>
 
         {/* Flash effect */}
-        <Animated.View 
-          style={[styles.flashOverlay, { opacity: flashAnim }]} 
+        <Animated.View
+          style={[styles.flashOverlay, { opacity: flashAnim }]}
           pointerEvents="none"
         />
       </View>
@@ -198,19 +225,19 @@ export default function CameraCaptureScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: "#000",
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
     paddingHorizontal: 12,
     paddingTop: 50,
     paddingBottom: 12,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-    position: 'relative',
+    borderBottomColor: "#f0f0f0",
+    position: "relative",
   },
   backButton: {
     paddingLeft: 15,
@@ -220,36 +247,36 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#000',
+    fontWeight: "600",
+    color: "#000",
     flex: 1,
-    textAlign: 'center',
+    textAlign: "center",
     paddingHorizontal: 8,
   },
   cameraContainer: {
     flex: 1,
-    position: 'relative',
-    backgroundColor: '#000',
+    position: "relative",
+    backgroundColor: "#000",
   },
   camera: {
     flex: 1,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    flexDirection: 'column',
+    flexDirection: "column",
   },
   darkRegion: {
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: "rgba(0,0,0,0.55)",
   },
   roiBox: {
     width: ROI_WIDTH,
     height: ROI_HEIGHT,
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.3)',
-    position: 'relative',
+    borderColor: "rgba(255,255,255,0.3)",
+    position: "relative",
   },
   corner: {
-    position: 'absolute',
+    position: "absolute",
     width: 22,
     height: 22,
   },
@@ -258,71 +285,71 @@ const styles = StyleSheet.create({
     left: 0,
     borderTopWidth: 3,
     borderLeftWidth: 3,
-    borderColor: '#4ADE80',
+    borderColor: "#4ADE80",
   },
   topRight: {
     top: 0,
     right: 0,
     borderTopWidth: 3,
     borderRightWidth: 3,
-    borderColor: '#4ADE80',
+    borderColor: "#4ADE80",
   },
   bottomLeft: {
     bottom: 0,
     left: 0,
     borderBottomWidth: 3,
     borderLeftWidth: 3,
-    borderColor: '#4ADE80',
+    borderColor: "#4ADE80",
   },
   bottomRight: {
     bottom: 0,
     right: 0,
     borderBottomWidth: 3,
     borderRightWidth: 3,
-    borderColor: '#4ADE80',
+    borderColor: "#4ADE80",
   },
   instructionContainer: {
-    position: 'absolute',
+    position: "absolute",
     left: 0,
     right: 0,
-    alignItems: 'center',
+    alignItems: "center",
     paddingHorizontal: 24,
   },
   instructionText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 14,
-    fontWeight: '600',
-    textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.8)',
+    fontWeight: "600",
+    textAlign: "center",
+    textShadowColor: "rgba(0,0,0,0.8)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
   subInstructionContainer: {
-    position: 'absolute',
+    position: "absolute",
     left: 0,
     right: 0,
-    alignItems: 'center',
+    alignItems: "center",
     paddingHorizontal: 32,
   },
   subInstructionText: {
-    color: 'rgba(255,255,255,0.7)',
+    color: "rgba(255,255,255,0.7)",
     fontSize: 11,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.8)',
+    textAlign: "center",
+    textShadowColor: "rgba(0,0,0,0.8)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
   overlayBottom: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 32,
     left: 0,
     right: 0,
-    alignItems: 'center',
+    alignItems: "center",
   },
   counterText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
     marginBottom: 12,
   },
   shutterButton: {
@@ -330,15 +357,15 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 32,
     borderWidth: 4,
-    borderColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
   },
   shutterInner: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   shutterInnerPressed: {
     width: 36,
@@ -347,30 +374,30 @@ const styles = StyleSheet.create({
   },
   flashOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   permissionContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     padding: 24,
-    backgroundColor: '#000',
+    backgroundColor: "#000",
   },
   permissionText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    textAlign: 'center',
+    textAlign: "center",
     marginBottom: 16,
   },
   permissionButton: {
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 10,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   permissionButtonText: {
-    color: '#000',
-    fontWeight: '600',
+    color: "#000",
+    fontWeight: "600",
     fontSize: 15,
   },
 });

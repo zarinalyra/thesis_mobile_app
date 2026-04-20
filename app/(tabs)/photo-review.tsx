@@ -1,13 +1,18 @@
 import { ThemedText } from "@/components/themed-text";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { supabase } from "@/supabase";
-import { uploadPhotosToSupabase, PhotoWithExif } from "@/utils/exif-extractor";
-import { useLocalSearchParams, useRouter } from "expo-router";
 import { usePhotos } from "@/context/PhotoContext";
-import React, { useState } from "react";
+import { supabase } from "@/supabase";
+import { analyzeLeafImages, FLASK_SERVER_URL } from "@/utils/analysis-service";
 import {
-  Alert,
+  PhotoWithExif,
+  uploadImagesOnlyToSupabase,
+  uploadPhotosToSupabase,
+} from "@/utils/exif-extractor";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useState } from "react";
+import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   FlatList,
   Image,
@@ -18,18 +23,25 @@ import {
 } from "react-native";
 
 const { width } = Dimensions.get("window");
-const CARD_SIZE = (width - 48) / 2; // 2 cards per row with padding
+const CARD_SIZE = (width - 48) / 2;
 
 export default function PhotoReviewScreen() {
-  const { farmId, treeId, treeType, datePlanted } = useLocalSearchParams();
+  const { farmId, treeId, treeType, datePlanted, isUpdate } =
+    useLocalSearchParams();
   const router = useRouter();
   const { photos, setPhotos, clearPhotos, treeDetails } = usePhotos();
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string>("");
 
-  const resolvedTreeId = (treeDetails.treeId || String(treeId ?? '')).trim();
-  const resolvedTreeType = (treeDetails.treeType || String(treeType ?? '')).trim();
-  const resolvedDatePlanted = (treeDetails.datePlanted || String(datePlanted ?? '')).trim();
+  const resolvedTreeId = (treeDetails.treeId || String(treeId ?? "")).trim();
+  const resolvedTreeType = (
+    treeDetails.treeType || String(treeType ?? "")
+  ).trim();
+  const resolvedDatePlanted = (
+    treeDetails.datePlanted || String(datePlanted ?? "")
+  ).trim();
+  const isUpdateFlow = isUpdate === "true";
 
   const handleBackPress = () => {
     router.push(`/(tabs)/farm-map?farmId=${farmId}`);
@@ -37,12 +49,13 @@ export default function PhotoReviewScreen() {
 
   const handleAddMore = () => {
     router.push({
-      pathname: '/(tabs)/camera-capture',
+      pathname: "/(tabs)/camera-capture",
       params: {
         farmId: String(farmId),
         treeId: resolvedTreeId,
         treeType: resolvedTreeType,
         datePlanted: resolvedDatePlanted,
+        isUpdate: String(isUpdate ?? "false"),
       },
     });
   };
@@ -54,50 +67,151 @@ export default function PhotoReviewScreen() {
   const handleSubmit = async () => {
     if (!resolvedTreeId || !resolvedTreeType || !resolvedDatePlanted) {
       Alert.alert(
-        'Missing Tree Details',
-        'Tree ID, Tree Type, and Date Planted are required. Please go back to Add Tree and complete all fields.'
+        "Missing Tree Details",
+        "Tree ID, Tree Type, and Date Planted are required.",
+      );
+      return;
+    }
+    if (photos.length < 3) {
+      Alert.alert(
+        "Not Enough Images",
+        "Please capture at least 3 images before submitting.",
       );
       return;
     }
 
     setUploading(true);
     try {
-      console.log('Starting batch upload of', photos.length, 'photos');
-      
-      // Default to no disease until ML model is integrated
-      const hasDisease = false;
-      
-      await uploadPhotosToSupabase(supabase, photos, farmId as string, hasDisease, {
-        treeId: resolvedTreeId,
-        treeType: resolvedTreeType,
-        datePlanted: resolvedDatePlanted,
-      });
-      
-      alert("Photos uploaded successfully! Average location saved.");
+      // ── STEP 1: Flask analysis ──────────────────────────────
+      setStatusMessage("Analyzing leaf images...");
+      console.log("=== FLASK CALL START ===");
+      console.log("Flask URL:", FLASK_SERVER_URL);
+      console.log("Tree ID:", resolvedTreeId);
+      console.log("Is update:", isUpdateFlow);
+
+      let analysisResult = null;
+      let hasDisease = false;
+
+      try {
+        analysisResult = await analyzeLeafImages(photos, resolvedTreeId);
+        console.log("Flask result:", JSON.stringify(analysisResult));
+        hasDisease =
+          analysisResult.detection.diseases_detected.length > 0 ||
+          analysisResult.detection.pests_detected.length > 0;
+      } catch (err: any) {
+        console.warn("Flask failed:", err.message);
+        analysisResult = null;
+        hasDisease = false;
+      }
+      console.log("=== FLASK CALL END ===");
+
+      // ── STEP 2: Upload images ───────────────────────────────
+      setStatusMessage("Uploading photos...");
+
+      let geotagId: number | null = null;
+      // imageIds for THIS inspection — used to display only current inspection images
+      let inspectionImageIds: number[] = [];
+
+      if (isUpdateFlow) {
+        // UPDATE — images only, no new geotag, GPS unchanged
+        console.log("Update flow — uploading images only");
+        inspectionImageIds = await uploadImagesOnlyToSupabase(
+          supabase,
+          photos,
+          farmId as string,
+        );
+        console.log("Update image IDs:", inspectionImageIds);
+      } else {
+        // ADD TREE — full upload with GPS averaging and geotag
+        console.log("Add tree flow — uploading with geotag");
+        const geotagData = await uploadPhotosToSupabase(
+          supabase,
+          photos,
+          farmId as string,
+          hasDisease,
+          {
+            treeId: resolvedTreeId,
+            treeType: resolvedTreeType,
+            datePlanted: resolvedDatePlanted,
+          },
+        );
+        geotagId = geotagData?.id ?? null;
+
+        // Extract image IDs from raw_exif stored by uploadPhotosToSupabase
+        const rawExif = geotagData?.raw_exif as any;
+        inspectionImageIds = Array.isArray(rawExif?.image_ids)
+          ? rawExif.image_ids
+          : Array.isArray(rawExif?.imageIds)
+            ? rawExif.imageIds
+            : [];
+
+        console.log("Add tree geotag ID:", geotagId);
+        console.log("Add tree image IDs:", inspectionImageIds);
+      }
+
+      // ── STEP 3: Save analysis results with image IDs ────────
+      if (analysisResult) {
+        setStatusMessage("Saving analysis results...");
+        console.log("Saving analysis results...");
+
+        const { error: analysisError } = await supabase
+          .from("analysis_results")
+          .insert({
+            tree_id: resolvedTreeId,
+            farm_id: farmId,
+            geotag_id: geotagId,
+            inspection_date: analysisResult.inspection_date,
+            diseases_detected: analysisResult.detection.diseases_detected,
+            pests_detected: analysisResult.detection.pests_detected,
+            confidence: analysisResult.detection.confidence,
+            chlorosis_readings: analysisResult.chlorosis_readings,
+            // Store which images belong to THIS inspection
+            image_ids: inspectionImageIds,
+          });
+
+        if (analysisError) {
+          console.warn("Analysis save failed:", analysisError.message);
+        } else {
+          console.log(
+            "Analysis results saved with image IDs:",
+            inspectionImageIds,
+          );
+        }
+      }
+
+      // ── DONE ────────────────────────────────────────────────
+      setStatusMessage("");
+      alert(
+        isUpdateFlow
+          ? "Card updated successfully!"
+          : "Tree added successfully!",
+      );
       clearPhotos();
       router.push(`/(tabs)/farm-map?farmId=${farmId}`);
     } catch (error: any) {
-      console.error("Upload error:", error);
-      alert(`Failed to upload photos: ${error.message || "Unknown error"}`);
+      console.error("Submit error:", error);
+      setStatusMessage("");
+      alert(`Failed to upload: ${error.message || "Unknown error"}`);
     } finally {
       setUploading(false);
+      setStatusMessage("");
     }
   };
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Pressable style={styles.backButton} onPress={handleBackPress}>
           <IconSymbol name="map" size={24} color="#000" />
         </Pressable>
         <ThemedText style={styles.headerTitle}>
-          Add New Tree to Farm-{farmId}
+          {isUpdateFlow
+            ? `Update Tree ${resolvedTreeId}`
+            : `Add New Tree to Farm-${farmId}`}
         </ThemedText>
         <View style={styles.spacer} />
       </View>
 
-      {/* Grid */}
       <FlatList
         data={[...photos, "+" as any]}
         numColumns={2}
@@ -137,6 +251,10 @@ export default function PhotoReviewScreen() {
         }}
       />
 
+      {uploading && statusMessage ? (
+        <ThemedText style={styles.statusText}>{statusMessage}</ThemedText>
+      ) : null}
+
       <Pressable
         style={styles.submitButton}
         onPress={handleSubmit}
@@ -149,10 +267,9 @@ export default function PhotoReviewScreen() {
         )}
       </Pressable>
 
-      {/* Image Preview Modal */}
       <Modal
         visible={previewImage !== null}
-        transparent={true}
+        transparent
         animationType="fade"
         onRequestClose={() => setPreviewImage(null)}
       >
@@ -183,10 +300,7 @@ export default function PhotoReviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#E8F5E9",
-  },
+  container: { flex: 1, backgroundColor: "#E8F5E9" },
   header: {
     flexDirection: "row",
     justifyContent: "center",
@@ -197,14 +311,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderBottomWidth: 1,
     borderBottomColor: "#f0f0f0",
-    position: "relative",
   },
-  backButton: {
-    paddingLeft: 15,
-  },
-  spacer: {
-    width: 24,
-  },
+  backButton: { paddingLeft: 15 },
+  spacer: { width: 24 },
   headerTitle: {
     fontSize: 16,
     fontWeight: "600",
@@ -213,22 +322,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: 8,
   },
-  grid: {
-    padding: 16,
-  },
+  grid: { padding: 16 },
   photoCard: {
     width: CARD_SIZE,
     height: CARD_SIZE,
     borderRadius: 10,
     overflow: "hidden",
     margin: 4,
-    position: "relative",
     backgroundColor: "#ddd",
   },
-  photo: {
-    width: "100%",
-    height: "100%",
-  },
+  photo: { width: "100%", height: "100%" },
   closeButton: {
     position: "absolute",
     top: 6,
@@ -240,11 +343,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  closeText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#000",
-  },
+  closeText: { fontSize: 14, fontWeight: "700", color: "#000" },
   addCard: {
     width: CARD_SIZE,
     height: CARD_SIZE,
@@ -262,41 +361,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  addPlus: {
-    fontSize: 32,
-    fontWeight: "700",
-    color: "#000",
-  },
-  modalBackground: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.9)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalContent: {
-    width: "90%",
-    height: "80%",
-    position: "relative",
-  },
-  previewImage: {
-    width: "100%",
-    height: "100%",
-  },
-  closePreviewButton: {
-    position: "absolute",
-    top: 20,
-    right: 20,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  closePreviewText: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#000",
+  addPlus: { fontSize: 32, fontWeight: "700", color: "#000" },
+  statusText: {
+    textAlign: "center",
+    fontSize: 14,
+    color: "#555",
+    marginBottom: 4,
   },
   submitButton: {
     backgroundColor: "#fff",
@@ -310,9 +380,25 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: 150,
   },
-  submitButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#000",
+  submitButtonText: { fontSize: 16, fontWeight: "600", color: "#000" },
+  modalBackground: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
   },
+  modalContent: { width: "90%", height: "80%", position: "relative" },
+  previewImage: { width: "100%", height: "100%" },
+  closePreviewButton: {
+    position: "absolute",
+    top: 20,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  closePreviewText: { fontSize: 20, fontWeight: "700", color: "#000" },
 });
