@@ -14,8 +14,45 @@ from flask import Flask, request, jsonify
 from datetime import date
 from chlorosis import compute_chlorosis_from_bytes
 import urllib.request
+import cv2
+import numpy as np
 
 app = Flask(__name__)
+
+# Maximum dimension for any side of the image before processing.
+# Keeps memory usage under ~150 MB per image on Render's free tier.
+MAX_IMAGE_DIM = 800
+
+
+# =============================================================================
+# HELPER — resize image bytes before processing
+# =============================================================================
+def resize_image_bytes(image_bytes: bytes, max_dim: int = MAX_IMAGE_DIM) -> bytes:
+    """
+    Decode image bytes, resize so the longest side <= max_dim,
+    then re-encode as JPEG and return new bytes.
+    Returns original bytes unchanged if decoding fails.
+    """
+    img_array = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+    if img is None:
+        return image_bytes
+
+    h, w = img.shape[:2]
+    if max(h, w) <= max_dim:
+        return image_bytes  # already small enough
+
+    scale = max_dim / max(h, w)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    success, encoded = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    if not success:
+        return image_bytes
+
+    return encoded.tobytes()
 
 
 # =============================================================================
@@ -48,7 +85,7 @@ def pick_best_detection(detections: list) -> dict:
 def analyze():
     """
     Receives a JSON body with tree_id and a list of image URLs.
-    Downloads each image, runs chlorosis and SWAT-DCNN.
+    Downloads each image, resizes it, runs chlorosis and SWAT-DCNN.
 
     Expected request (JSON):
         {
@@ -89,7 +126,7 @@ def analyze():
     if len(image_urls) < 3:
         return jsonify({"error": "At least 3 image URLs are required."}), 400
 
-    # --- Download and process each image ---
+    # --- Download, resize, and process each image ---
     chlorosis_readings = []
     swat_results       = []
 
@@ -99,6 +136,9 @@ def analyze():
                 image_bytes = resp.read()
         except Exception as e:
             return jsonify({"error": f"Failed to download image {i}: {str(e)}"}), 500
+
+        # Resize to prevent OOM on Render free tier
+        image_bytes = resize_image_bytes(image_bytes, MAX_IMAGE_DIM)
 
         # Chlorosis computation
         chlorosis_result = compute_chlorosis_from_bytes(image_bytes)

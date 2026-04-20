@@ -6,7 +6,6 @@
  * on Render's free tier proxy.
  */
 
-
 export const FLASK_SERVER_URL = "https://thesis-mobile-app-v15u.onrender.com";
 
 // How long to wait for Flask before giving up (90 seconds).
