@@ -255,6 +255,8 @@ export default function FarmMapScreen() {
   // ── Refresh every time screen comes into focus ──────────────
   useFocusEffect(
     useCallback(() => {
+      // Prevent stale overlay from blocking map taps when returning from other screens.
+      setSelectedTree(null);
       fetchTrees();
     }, [fetchTrees]),
   );
@@ -291,7 +293,15 @@ export default function FarmMapScreen() {
   };
 
   const handleMapPress = (event: any) => {
-    // Disabled manual marker addition
+    // Ignore map press events that originate from marker taps.
+    if (event?.nativeEvent?.action === "marker-press") {
+      return;
+    }
+
+    // Tapping empty map area dismisses the details card.
+    if (selectedTree) {
+      setSelectedTree(null);
+    }
   };
 
   const handleMarkerPress = (marker: TreeMarker) => {

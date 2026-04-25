@@ -158,3 +158,184 @@
   flex: 1;
   margin-left: 8px;
 }
+
+.value-multiline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+}
+
+.record-image-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.record-tree-image-button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.record-tree-image-button:hover .record-tree-image {
+  transform: scale(1.02);
+}
+
+.record-tree-image {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #e6e6e6;
+  display: block;
+  transition: transform 0.2s ease;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1000;
+}
+
+.image-lightbox-content {
+  position: relative;
+  max-width: min(96vw, 1200px);
+  max-height: 92vh;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.image-lightbox-image {
+  max-width: 100%;
+  max-height: 92vh;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  background: #111;
+}
+
+.image-lightbox-close {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: #1b1b1b;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.image-lightbox-close:hover {
+  background: #f1f1f1;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-item {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fafafa;
+}
+
+.history-item-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.history-coordinates {
+  font-size: 12px;
+  color: #666;
+}
+
+.history-empty {
+  font-size: 12px;
+  color: #777;
+  font-style: italic;
+}
+
+.monitoring-table-wrap {
+  border: 1px solid #e4e4e4;
+  border-radius: 8px;
+  overflow: hidden;
+  height: 500px;
+  overflow-y: auto;
+}
+
+.monitoring-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.monitoring-table th,
+.monitoring-table td {
+  font-size: 12px;
+  padding: 8px;
+  border-bottom: 1px solid #ededed;
+  text-align: left;
+  vertical-align: top;
+}
+
+.monitoring-table th {
+  position: sticky;
+  top: 0;
+  background: #f6f8f6;
+  color: #1f4a22;
+  z-index: 1;
+}
+
+.monitoring-table tbody tr.active {
+  background: #eaf5eb;
+}
+
+.history-date-btn {
+  border: 1px solid #2e7d32;
+  background: #fff;
+  color: #2e7d32;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.history-date-btn:hover {
+  background: #2e7d32;
+  color: #fff;
+}
+
+.chlorosis-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chlorosis-line {
+  display: block;
+  font-size: 12px;
+  line-height: 1.3;
+}

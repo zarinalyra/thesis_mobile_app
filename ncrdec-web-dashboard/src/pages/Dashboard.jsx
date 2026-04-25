@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { loadDashboardData, formatDate } from '../lib/coffeeData'
 import StatCard from '../components/StatCard'
 import './Dashboard.css'
 
@@ -8,6 +8,7 @@ export default function Dashboard() {
     totalTrees: 0,
     treesWithoutDisease: 0,
     treesWithDisease: 0,
+    latestInspectionDate: '-',
   })
   const [loading, setLoading] = useState(true)
 
@@ -17,24 +18,17 @@ export default function Dashboard() {
 
   const fetchStats = async () => {
     try {
-      // Fetch total trees
-      const { data: allGeotags } = await supabase
-        .from('geotags')
-        .select('tree_id')
+      const { latestTrees, latestInspection } = await loadDashboardData()
 
-      // Group by tree_id to get unique trees
-      const uniqueTrees = new Set(allGeotags?.map(g => g.tree_id).filter(Boolean) || [])
-      const totalTrees = uniqueTrees.size
-
-      // For status counts, we'll use a simple heuristic based on the data
-      // This would need actual disease/pest detection data in your database
-      const treesWithDisease = Math.floor(totalTrees * 0.6) // Placeholder calculation
+      const totalTrees = latestTrees.length
+      const treesWithDisease = latestTrees.filter((tree) => tree.hasDisease).length
       const treesWithoutDisease = totalTrees - treesWithDisease
 
       setStats({
         totalTrees,
         treesWithoutDisease,
         treesWithDisease,
+        latestInspectionDate: formatDate(latestInspection?.inspection_date || latestInspection?.created_at),
       })
     } catch (error) {
       console.error('Error fetching stats:', error)
@@ -74,7 +68,7 @@ export default function Dashboard() {
         />
         <StatCard
           title="Last Updated"
-          value="Today"
+          value={stats.latestInspectionDate}
           icon="⏰"
           color="#ffa726"
         />

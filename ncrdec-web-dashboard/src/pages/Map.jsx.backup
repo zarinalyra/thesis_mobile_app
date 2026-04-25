@@ -1,0 +1,611 @@
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
+import { GoogleMap, MarkerF, useJsApiLoader } from '@react-google-maps/api'
+import { supabase } from '../lib/supabase'
+import './Map.css'
+
+const FARM_CENTER = { lat: 14.1976, lng: 120.884357 }
+const MAP_ZOOM = 23
+const containerStyle = { width: '100%', height: '100%' }
+
+function getMarkerColor(hasDisease) {
+  return hasDisease ? 'FFA500' : '00AA00'
+}
+
+function normalizeRawExif(rawExif) {
+  if (!rawExif) {
+    return {}
+  }
+
+  if (typeof rawExif === 'string') {
+    try {
+      return JSON.parse(rawExif)
+    } catch {
+      return {}
+    }
+  }
+
+  if (typeof rawExif === 'object') {
+    return rawExif
+  }
+
+  return {}
+}
+
+function toDateKey(value) {
+  if (!value) {
+    return ''
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return date.toISOString().slice(0, 10)
+}
+
+function formatDate(value) {
+  if (!value) {
+    return '-'
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleDateString()
+}
+
+function getChlorosisLines(analysis) {
+  const readings = analysis?.chlorosis_readings
+  if (!Array.isArray(readings) || readings.length === 0) {
+    return []
+  }
+
+  return readings.map((reading, index) => {
+    const imageNumber = Number(reading?.image_id)
+    const label = Number.isFinite(imageNumber) && imageNumber > 0 ? imageNumber : index + 1
+    const value = Number(reading?.chlorosis_percentage)
+    const percentage = Number.isFinite(value) ? `${value.toFixed(2)}%` : 'N/A'
+    return `Image ${label}: ${percentage}`
+  })
+}
+
+function getOrdinalLabel(index) {
+  const number = index + 1
+  const mod100 = number % 100
+  if (mod100 >= 11 && mod100 <= 13) {
+    return `${number}th`
+  }
+
+  const mod10 = number % 10
+  if (mod10 === 1) return `${number}st`
+  if (mod10 === 2) return `${number}nd`
+  if (mod10 === 3) return `${number}rd`
+  return `${number}th`
+}
+
+function getTreeAge(datePlanted) {
+  if (!datePlanted || datePlanted === '-') {
+    return '-'
+  }
+
+  const parts = datePlanted.split('-')
+  if (parts.length !== 3) {
+    return '-'
+  }
+
+  const [month, day, year] = parts.map(Number)
+  const plantedDate = new Date(year, month - 1, day)
+  if (Number.isNaN(plantedDate.getTime())) {
+    return '-'
+  }
+
+  const now = new Date()
+  let years = now.getFullYear() - plantedDate.getFullYear()
+  let months = now.getMonth() - plantedDate.getMonth()
+
+  if (months < 0) {
+    years -= 1
+    months += 12
+  }
+
+  if (years <= 0 && months <= 0) {
+    return 'Less than a month'
+  }
+
+  if (years <= 0) {
+    return `${months} month${months > 1 ? 's' : ''}`
+  }
+
+  return `${years} year${years > 1 ? 's' : ''}${months > 0 ? ` ${months} month${months > 1 ? 's' : ''}` : ''}`
+}
+
+function toFiniteNumber(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function resolveCoordinate(tree, rawExif) {
+  const latitudeCandidates = [
+    tree.latitude,
+    rawExif.latitude,
+    rawExif.lat,
+    rawExif.gps_latitude,
+    rawExif.gpsLatitude,
+  ]
+  const longitudeCandidates = [
+    tree.longitude,
+    rawExif.longitude,
+    rawExif.lng,
+    rawExif.lon,
+    rawExif.gps_longitude,
+    rawExif.gpsLongitude,
+  ]
+
+  const latitude = latitudeCandidates.map(toFiniteNumber).find((value) => value !== null)
+  const longitude = longitudeCandidates.map(toFiniteNumber).find((value) => value !== null)
+
+  if (latitude === null || longitude === null) {
+    return null
+  }
+
+  return { latitude, longitude }
+}
+
+export default function MapPage() {
+  const [markers, setMarkers] = useState([])
+  const [selectedMarker, setSelectedMarker] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState(null)
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''
+  const mapId = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || undefined
+  const { isLoaded, loadError } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: apiKey,
+  })
+  const googleMapRef = useRef(null)
+
+  const mapCenter = useMemo(() => FARM_CENTER, [])
+  const mapOptions = useMemo(() => ({
+    mapTypeId: 'satellite',
+    mapId,
+    streetViewControl: false,
+    mapTypeControl: false,
+    fullscreenControl: false,
+  }), [mapId])
+  const mapUnavailableReason = !apiKey
+    ? 'Google Maps API key is missing. Set VITE_GOOGLE_MAPS_API_KEY in your .env.local file.'
+    : loadError
+      ? 'Google Maps failed to load. Check your API key restrictions and billing setup, then refresh.'
+      : ''
+
+  const fetchMarkers = useCallback(async (showLoader = true) => {
+    try {
+      setFetchError(null)
+      if (showLoader) {
+        setLoading(true)
+      }
+
+      const withTreeColumnsSelect = 'id, latitude, longitude, raw_exif, farm_id, captured_at, image_id, tree_id, tree_type, date_planted'
+      const legacySelect = 'id, latitude, longitude, raw_exif, farm_id, captured_at, image_id'
+
+      let data = null
+      let error = null
+
+      const attempts = [
+        () => supabase.from('geotags').select(withTreeColumnsSelect).order('captured_at', { ascending: false }),
+        () => supabase.from('geotags').select(legacySelect).order('captured_at', { ascending: false }),
+        () => supabase.from('geotags').select(withTreeColumnsSelect),
+        () => supabase.from('geotags').select(legacySelect),
+      ]
+
+      for (const runAttempt of attempts) {
+        const result = await runAttempt()
+        data = result.data
+        error = result.error
+        if (!error) {
+          break
+        }
+      }
+
+      if (error) throw error
+
+      const groupedByTree = new globalThis.Map()
+      for (const tree of data || []) {
+        const rawExif = normalizeRawExif(tree.raw_exif)
+        const coordinate = resolveCoordinate(tree, rawExif)
+        if (!coordinate) {
+          continue
+        }
+
+        const resolvedTreeId = tree.tree_id || rawExif.tree_id || rawExif.treeId || tree.id
+        const resolvedTreeType = tree.tree_type || rawExif.tree_type || rawExif.treeType || 'Unknown'
+        const resolvedDatePlanted = tree.date_planted || rawExif.date_planted || rawExif.datePlanted || '-'
+
+        const imageIds = Array.isArray(rawExif.image_ids)
+          ? rawExif.image_ids
+          : Array.isArray(rawExif.imageIds)
+            ? rawExif.imageIds
+            : tree.image_id
+              ? [tree.image_id]
+              : []
+
+        const key = String(resolvedTreeId || tree.id)
+        const current = groupedByTree.get(key) || []
+        current.push({
+          rowId: tree.id,
+          coordinate,
+            if (!imageError && imageRows) {
+              imageRows.forEach((row) => {
+                if (row.id && row.file_path) {
+                  imageById.set(row.id, { 
+                    file_path: row.file_path, 
+                    uploaded_at: row.uploaded_at,
+                    captured_at: row.captured_at || row.uploaded_at,
+                  })
+                }
+              })
+              console.log('Image indexing complete:', {
+                totalImages: imageById.size,
+                sampleImage: Array.from(imageById.entries())[0],
+              })
+            }
+          hasDisease: latest.hasDisease,
+          treeId: latest.treeId,
+          treeType: latest.treeType,
+          datePlanted: latest.datePlanted,
+          capturedAt: latest.capturedAt,
+          farmId: latest.farmId,
+          imageIds: latest.imageIds,
+          latestImages: [],
+          monitoringCount: sortedRows.length,
+        }
+      })
+
+      let imageById = new globalThis.Map()
+      let imagesByCaptureDateAndTreeId = new globalThis.Map()
+
+      try {
+        // Fetch ALL images, not just those in imageIds
+        const { data: imageRows, error: imageError } = await supabase
+          .from('images')
+          .select('id, file_path, uploaded_at, captured_at, tree_id')
+          .order('uploaded_at', { ascending: false })
+
+        console.log('Images fetch result:', { rowCount: imageRows?.length, error: imageError })
+
+        if (!imageError && imageRows) {
+          imageRows.forEach((row) => {
+            if (row.id) {
+              imageById.set(row.id, { file_path: row.file_path, uploaded_at: row.uploaded_at })
+            }
+
+            // Index images by tree_id and captured_at for matching
+            if (row.tree_id && row.captured_at) {
+              const dateKey = toDateKey(row.captured_at)
+              const mapKey = `${row.tree_id}::${dateKey}`
+              if (!imagesByCaptureDateAndTreeId.has(mapKey)) {
+                imagesByCaptureDateAndTreeId.set(mapKey, [])
+              }
+              imagesByCaptureDateAndTreeId.get(mapKey).push(row)
+            }
+          })
+          console.log('Image indexing complete:', {
+            totalImages: imageById.size,
+            dateIndexedGroups: imagesByCaptureDateAndTreeId.size,
+          })
+        }
+      } catch (imageQueryError) {
+        console.warn('Error fetching all images:', imageQueryError)
+      }
+
+      // First try to use imageIds, then fallback to date matching
+      let imagesByMarker = new globalThis.Map()
+      for (const marker of treeMarkers) {
+        let markerImages = []
+
+        // Try imageIds first
+        if (marker.imageIds.length > 0) {
+          markerImages = marker.imageIds
+            .map((imageId) => imageById.get(imageId))
+            .filter((value) => Boolean(value?.file_path))
+        }
+
+        // If no images found from imageIds, try date matching
+        if (markerImages.length === 0) {
+          const dateKey = toDateKey(marker.capturedAt)
+          const mapKey = `${marker.treeId}::${dateKey}`
+          const dateMatchedImages = imagesByCaptureDateAndTreeId.get(mapKey) || []
+          
+          console.log(`Marker ${marker.treeId}: Looking for images on ${dateKey}, key=${mapKey}, found=${dateMatchedImages.length}`)
+          
+          markerImages = dateMatchedImages
+            .filter((img) => Boolean(img?.file_path))
+            .sort((a, b) => new Date(b.uploaded_at || 0).getTime() - new Date(a.uploaded_at || 0).getTime())
+            .map((img) => ({ file_path: img.file_path, uploaded_at: img.uploaded_at }))
+        }
+
+        // Sort by upload time
+        markerImages.sort((a, b) => new Date(b.uploaded_at || 0).getTime() - new Date(a.uploaded_at || 0).getTime())
+        imagesByMarker.set(marker.id, markerImages)
+        // Use imageIds from geotags - the most reliable source
+        let imagesByMarker = new globalThis.Map()
+        for (const marker of treeMarkers) {
+          const markerImages = []
+
+          // Get all images for this marker using imageIds
+          if (marker.imageIds.length > 0) {
+            for (const imageId of marker.imageIds) {
+              const img = imageById.get(imageId)
+              if (img?.file_path) {
+                markerImages.push(img)
+              }
+            }
+          }
+
+          // Sort by upload time (newest first)
+          markerImages.sort((a, b) => new Date(b.uploaded_at || 0).getTime() - new Date(a.uploaded_at || 0).getTime())
+        
+          console.log(`Marker ${marker.treeId}: imageIds=${marker.imageIds.length}, found=${markerImages.length} images`)
+          imagesByMarker.set(marker.id, markerImages)
+      }
+
+      const markersWithImages = treeMarkers.map((marker) => {
+        const markerImageFiles = imagesByMarker.get(marker.id) || []
+        const latestImages = markerImageFiles
+          .map((image) => {
+            try {
+              if (!image?.file_path) return null
+              const result = supabase.storage.from('leafImages').getPublicUrl(image.file_path)
+              return result?.data?.publicUrl || null
+            } catch (err) {
+              console.warn('Error generating image URL for', image?.file_path, err)
+              return null
+            }
+          })
+          .filter(Boolean)
+
+        console.log(`Marker ${marker.treeId}: ${markerImageFiles.length} image files -> ${latestImages.length} URLs`)
+        return { ...marker, latestImages }
+      })
+
+      let analysisByTreeId = new globalThis.Map()
+      try {
+        const { data: analysisRows, error: analysisError } = await supabase
+          .from('analysis_results')
+          .select('id, tree_id, diseases_detected, pests_detected, chlorosis_readings, inspection_date, created_at')
+          .order('created_at', { ascending: false })
+
+        if (!analysisError) {
+          for (const analysis of analysisRows || []) {
+            const treeId = String(analysis.tree_id || '')
+            if (!treeId || analysisByTreeId.has(treeId)) {
+              continue
+            }
+
+            analysisByTreeId.set(treeId, analysis)
+          }
+        }
+      } catch (analysisFetchError) {
+        console.warn('Error fetching analysis results:', analysisFetchError)
+      }
+
+      const markersWithAnalysis = markersWithImages.map((marker) => ({
+        ...marker,
+        latestAnalysis: analysisByTreeId.get(String(marker.treeId)) || null,
+      }))
+
+      setMarkers(markersWithAnalysis)
+    } catch (error) {
+      console.error('Error fetching markers:', error)
+      const message = String(error?.message || error || 'Unknown error')
+      const isNetworkError = /network request failed|failed to fetch|fetch/i.test(message)
+      setFetchError(
+        isNetworkError
+          ? 'Cannot reach the database right now. Check internet and Supabase config, then retry.'
+          : `Failed to load map trees: ${message}`
+      )
+    } finally {
+      if (showLoader) {
+        setLoading(false)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchMarkers(true)
+
+    const geotagsChannel = supabase
+      .channel('web-geotags-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'geotags' }, (payload) => {
+        console.log('Geotags updated:', payload)
+        fetchMarkers(false)
+      })
+      .subscribe()
+
+    const analysisChannel = supabase
+      .channel('web-analysis-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_results' }, (payload) => {
+        console.log('Analysis results updated:', payload)
+        fetchMarkers(false)
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(geotagsChannel)
+      supabase.removeChannel(analysisChannel)
+    }
+  }, [fetchMarkers])
+
+  if (loading) {
+    return <div className="page-content">Loading map...</div>
+  }
+
+  return (
+    <div className="page-content map-page">
+      <div className="page-header">
+        <h1>Farm Map</h1>
+      </div>
+
+      {fetchError && (
+        <div className="map-fetch-error">
+          <span>{fetchError}</span>
+          <button className="map-retry-btn" onClick={fetchMarkers}>Retry</button>
+        </div>
+      )}
+
+      <div className="map-container">
+        <div className="google-map-shell">
+          {isLoaded && !mapUnavailableReason ? (
+            <GoogleMap
+              mapContainerStyle={containerStyle}
+              center={mapCenter}
+              zoom={MAP_ZOOM}
+              onLoad={(map) => {
+                googleMapRef.current = map
+              }}
+              options={mapOptions}
+            >
+              {markers.map((marker) => {
+                const markerColor = getMarkerColor(marker.hasDisease)
+                const icon = {
+                  path: 'M12 0C5.383 0 0 5.383 0 12c0 7.5 12 22 12 22s12-14.5 12-22c0-6.617-5.383-12-12-12z',
+                  fillColor: `#${markerColor}`,
+                  fillOpacity: 1,
+                  strokeColor: '#fff',
+                  strokeWeight: 2,
+                  scale: 1.2,
+                }
+                return (
+                  <MarkerF
+                    key={marker.id}
+                    position={{ lat: marker.coordinate.latitude, lng: marker.coordinate.longitude }}
+                    onClick={() => setSelectedMarker(marker)}
+                    icon={icon}
+                  />
+                )
+              })}
+            </GoogleMap>
+          ) : mapUnavailableReason ? (
+            <div className="map-api-error">{mapUnavailableReason}</div>
+          ) : (
+            <div className="map-api-error">Loading Google Map...</div>
+          )}
+        </div>
+
+        <div className="map-sidebar">
+          <div className="farm-info">
+            <h3>Farm-01</h3>
+            <div className="stat">
+              <span className="label">Total Number of Trees:</span>
+              <span className="value">{markers.length}</span>
+            </div>
+            <div className="stat">
+              <span className="label status-label status-label-healthy">
+                <span className="status-dot" aria-hidden="true" />
+                No Detected Diseases/Pests:
+              </span>
+              <span className="value">{markers.filter((marker) => !marker.hasDisease).length}</span>
+            </div>
+            <div className="stat">
+              <span className="label status-label status-label-detected">
+                <span className="status-dot" aria-hidden="true" />
+                Detected Diseases/Pests:
+              </span>
+              <span className="value">{markers.filter((marker) => marker.hasDisease).length}</span>
+            </div>
+          </div>
+
+          {selectedMarker && (
+            <div className="tree-info">
+              <h3>Coffee Tree Information</h3>
+              <div className="info-row">
+                <span className="label">Tree ID:</span>
+                <span className="value">{selectedMarker.treeId || '-'}</span>
+              </div>
+              <div className="info-row">
+                <span className="label">Farm ID:</span>
+                <span className="value">{selectedMarker.farmId || '-'}</span>
+              </div>
+              <div className="info-row">
+                <span className="label">Tree Type:</span>
+                <span className="value">{selectedMarker.treeType || '-'}</span>
+              </div>
+              <div className="info-row">
+                <span className="label">Date Planted:</span>
+                <span className="value">{selectedMarker.datePlanted || '-'}</span>
+              </div>
+              <div className="info-row">
+                <span className="label">Tree Age:</span>
+                <span className="value">{getTreeAge(selectedMarker.datePlanted)}</span>
+              </div>
+              <div className="info-row">
+                <span className="label">GPS Coordinates:</span>
+                <span className="value">
+                  {selectedMarker.coordinate.latitude.toFixed(6)}, {selectedMarker.coordinate.longitude.toFixed(6)}
+                </span>
+              </div>
+              <div className="info-row">
+                <span className="label">Times Monitored:</span>
+                <span className="value">{selectedMarker.monitoringCount || 1}</span>
+              </div>
+
+              <h3 style={{ marginTop: '16px' }}>Latest Inspection Result</h3>
+              <div className="info-row">
+                <span className="label">Disease/s Detected:</span>
+                <span className="value">
+                  {selectedMarker.latestAnalysis?.diseases_detected?.length
+                    ? selectedMarker.latestAnalysis.diseases_detected.join(', ')
+                    : selectedMarker.hasDisease ? 'Detected' : 'None'}
+                </span>
+              </div>
+              <div className="info-row">
+                <span className="label">Pest/s Detected:</span>
+                <span className="value">
+                  {selectedMarker.latestAnalysis?.pests_detected?.length
+                    ? selectedMarker.latestAnalysis.pests_detected.join(', ')
+                    : 'None'}
+                </span>
+              </div>
+              <div className="info-row">
+                <span className="label">Leaf Chlorosis:</span>
+                <span className="value map-value-multiline">
+                  {getChlorosisLines(selectedMarker.latestAnalysis).length > 0 ? (
+                    <span className="map-chlorosis-lines">
+                      {getChlorosisLines(selectedMarker.latestAnalysis).map((line) => (
+                        <span key={`${selectedMarker.id}-${line}`} className="map-chlorosis-line">{line}</span>
+                      ))}
+                    </span>
+                  ) : 'None'}
+                </span>
+              </div>
+              <div className="info-row">
+                <span className="label">Date of Last Inspection:</span>
+                <span className="value">{formatDate(selectedMarker.latestAnalysis?.inspection_date || selectedMarker.latestAnalysis?.created_at || selectedMarker.capturedAt)}</span>
+              </div>
+
+              <h3 style={{ marginTop: '16px' }}>Latest Images</h3>
+              {selectedMarker.latestImages && selectedMarker.latestImages.length > 0 ? (
+                <div className="image-grid">
+                  {selectedMarker.latestImages.map((imageUrl, index) => (
+                    <img key={`${selectedMarker.id}-${index}`} src={imageUrl} alt={`Leaf ${index + 1}`} className="tree-image" />
+                  ))}
+                </div>
+              ) : (
+                <div className="image-placeholder">No latest images available</div>
+              )}
+            </div>
+          )}
+
+          {!selectedMarker && (
+            <div style={{ padding: '16px', color: '#999', textAlign: 'center' }}>
+              Click on a marker to view tree details
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

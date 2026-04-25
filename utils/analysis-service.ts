@@ -34,6 +34,21 @@ export interface AnalysisResult {
   chlorosis_readings: ChlorosisReading[];
 }
 
+interface RawAnalysisResult {
+  tree_id: string;
+  inspection_date: string;
+  detection: {
+    diseases_detected: string[];
+    pests_detected: string[];
+    confidence: number;
+  };
+  chlorosis_readings: Array<{
+    image_id: number;
+    chlorosis_percentage: number;
+    valid: boolean;
+  }>;
+}
+
 // ─────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────
@@ -74,34 +89,93 @@ export async function analyzeLeafImages(
 
   let lastError: Error = new Error("Unknown error");
 
+  const postAnalyze = async (urls: string[]): Promise<RawAnalysisResult> => {
+    const response = await fetchWithTimeout(
+      `${FLASK_SERVER_URL}/analyze`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          tree_id: treeId,
+          image_urls: urls,
+        }),
+      },
+      TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Server error ${response.status}: ${errorText}`);
+    }
+
+    return response.json();
+  };
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(`Flask attempt ${attempt} of ${MAX_RETRIES}...`);
 
-      const response = await fetchWithTimeout(
-        `${FLASK_SERVER_URL}/analyze`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            tree_id: treeId,
-            image_urls: imageUrls,
-          }),
-        },
-        TIMEOUT_MS,
-      );
+      const result = await postAnalyze(imageUrls);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server error ${response.status}: ${errorText}`);
+      // Some deployed backends still return only the first 3 chlorosis readings.
+      // If that happens, run additional analyses for missing images and merge.
+      if (Array.isArray(result.chlorosis_readings) && result.chlorosis_readings.length < imageUrls.length) {
+        console.warn(
+          `Flask returned ${result.chlorosis_readings.length}/${imageUrls.length} chlorosis readings. Backfilling missing readings...`,
+        );
+
+        const mergedReadings: ChlorosisReading[] = [];
+        const CHUNK_SIZE = 3;
+
+        for (let start = 0; start < imageUrls.length; start += CHUNK_SIZE) {
+          const chunk = imageUrls.slice(start, start + CHUNK_SIZE);
+          if (chunk.length === 0) {
+            continue;
+          }
+
+          const paddedChunk = [...chunk];
+          while (paddedChunk.length < CHUNK_SIZE) {
+            paddedChunk.push(chunk[chunk.length - 1]);
+          }
+
+          const chunkResult = await postAnalyze(paddedChunk);
+          const chunkReadings = Array.isArray(chunkResult?.chlorosis_readings)
+            ? chunkResult.chlorosis_readings
+            : [];
+
+          const readingsForRealImages = chunkReadings.slice(0, chunk.length);
+          readingsForRealImages.forEach((reading, index) => {
+            mergedReadings.push({
+              image_id: start + index + 1,
+              chlorosis_percentage: Number(reading?.chlorosis_percentage) || 0,
+              valid: Boolean(reading?.valid),
+            });
+          });
+        }
+
+        const finalResult: AnalysisResult = {
+          ...result,
+          chlorosis_readings: mergedReadings,
+        };
+
+        console.log("Flask response (merged) received:", JSON.stringify(finalResult));
+        return finalResult;
       }
 
-      const result: AnalysisResult = await response.json();
-      console.log("Flask response received:", JSON.stringify(result));
-      return result;
+      const normalized: AnalysisResult = {
+        ...result,
+        chlorosis_readings: (result.chlorosis_readings || []).map((reading, index) => ({
+          image_id: index + 1,
+          chlorosis_percentage: Number(reading?.chlorosis_percentage) || 0,
+          valid: Boolean(reading?.valid),
+        })),
+      };
+
+      console.log("Flask response received:", JSON.stringify(normalized));
+      return normalized;
     } catch (err: any) {
       lastError = err;
       const isLastAttempt = attempt === MAX_RETRIES;

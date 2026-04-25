@@ -2,14 +2,14 @@ import { ThemedText } from "@/components/themed-text";
 import { supabase } from "@/supabase";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Animated,
-  Image,
-  PanResponder,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
+    ActivityIndicator,
+    Animated,
+    Image,
+    PanResponder,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    View,
 } from "react-native";
 
 // ─────────────────────────────────────────────────────────────

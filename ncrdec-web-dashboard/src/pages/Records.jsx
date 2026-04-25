@@ -1,50 +1,168 @@
-import React, { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
-import './Records.css'
+import { useEffect, useState } from "react";
+import { formatDate, getTreeAge, loadRecordsData } from "../lib/coffeeData";
+import { supabase } from "../lib/supabase";
+import "./Records.css";
+
+function renderDetectedList(values) {
+  return Array.isArray(values) && values.length > 0
+    ? values.join(", ")
+    : "None";
+}
+
+function getOrdinalLabel(index) {
+  const number = index + 1;
+  const mod100 = number % 100;
+  if (mod100 >= 11 && mod100 <= 13) {
+    return `${number}th`;
+  }
+
+  const mod10 = number % 10;
+  if (mod10 === 1) return `${number}st`;
+  if (mod10 === 2) return `${number}nd`;
+  if (mod10 === 3) return `${number}rd`;
+  return `${number}th`;
+}
+
+function getChlorosisLines(analysis) {
+  const readings = analysis?.chlorosis_readings;
+  if (!Array.isArray(readings) || readings.length === 0) {
+    return [];
+  }
+
+  return readings.map((reading, index) => {
+    const imageNumber = Number(reading?.image_id);
+    const label =
+      Number.isFinite(imageNumber) && imageNumber > 0 ? imageNumber : index + 1;
+    const value = Number(reading?.chlorosis_percentage);
+    const percentage = Number.isFinite(value) ? `${value.toFixed(2)}%` : "N/A";
+    return `Image ${label}: ${percentage}`;
+  });
+}
 
 export default function Records() {
-  const [records, setRecords] = useState([])
-  const [searchTerm, setSearchTerm] = useState('')
-  const [selectedTree, setSelectedTree] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    fetchRecords()
-  }, [])
+  const [records, setRecords] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedTree, setSelectedTree] = useState(null);
+  const [selectedMonitoring, setSelectedMonitoring] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   const fetchRecords = async () => {
     try {
-      const { data: geotags, error } = await supabase
-        .from('geotags')
-        .select('*, images(file_path, uploaded_at)')
-        .order('captured_at', { ascending: false })
+      const treeRecords = await loadRecordsData();
+      setRecords(treeRecords);
 
-      if (error) throw error
-
-      // Group by tree_id
-      const groupedRecords = {}
-      geotags?.forEach(record => {
-        const treeId = record.tree_id || 'unknown'
-        if (!groupedRecords[treeId]) {
-          groupedRecords[treeId] = []
+      setSelectedTree((previousTree) => {
+        if (!previousTree) {
+          return previousTree;
         }
-        groupedRecords[treeId].push(record)
-      })
 
-      setRecords(geotags || [])
+        const updatedTree =
+          treeRecords.find(
+            (record) => String(record.treeId) === String(previousTree.treeId),
+          ) || null;
+
+        setSelectedMonitoring((previousMonitoring) => {
+          if (!previousMonitoring || !updatedTree) {
+            return previousMonitoring && !updatedTree
+              ? null
+              : previousMonitoring;
+          }
+
+          return (
+            updatedTree.history?.find(
+              (item) => String(item.id) === String(previousMonitoring.id),
+            ) || null
+          );
+        });
+
+        return updatedTree;
+      });
     } catch (error) {
-      console.error('Error fetching records:', error)
+      console.error("Error fetching records:", error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  const filteredRecords = records.filter(record =>
-    (record.tree_id || '').toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  useEffect(() => {
+    fetchRecords();
+
+    const geotagsChannel = supabase
+      .channel("web-records-geotags")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "geotags" },
+        (payload) => {
+          console.log("Geotags updated - refreshing records:", payload);
+          fetchRecords();
+        },
+      )
+      .subscribe();
+
+    const analysisChannel = supabase
+      .channel("web-records-analysis")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "analysis_results" },
+        (payload) => {
+          console.log(
+            "Analysis results updated - refreshing records:",
+            payload,
+          );
+          fetchRecords();
+        },
+      )
+      .subscribe();
+
+    const imagesChannel = supabase
+      .channel("web-records-images")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "images" },
+        (payload) => {
+          console.log("Images updated - refreshing records:", payload);
+          fetchRecords();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(geotagsChannel);
+      supabase.removeChannel(analysisChannel);
+      supabase.removeChannel(imagesChannel);
+    };
+  }, []);
+
+  const filteredRecords = records.filter((record) =>
+    (record.treeId || "").toLowerCase().includes(searchTerm.toLowerCase()),
+  );
+
+  useEffect(() => {
+    if (selectedTree) {
+      console.log(`Selected Tree: ${selectedTree.treeId}`);
+      console.log(`History length: ${selectedTree.history?.length || 0}`);
+      console.log(`Full history:`, selectedTree.history);
+    }
+  }, [selectedTree]);
+
+  useEffect(() => {
+    if (!selectedImage) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setSelectedImage(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedImage]);
 
   if (loading) {
-    return <div className="page-content">Loading...</div>
+    return <div className="page-content">Loading...</div>;
   }
 
   return (
@@ -80,16 +198,24 @@ export default function Records() {
               {filteredRecords.length > 0 ? (
                 filteredRecords.map((record) => (
                   <tr
-                    key={record.id}
-                    onClick={() => setSelectedTree(record)}
-                    className={selectedTree?.id === record.id ? 'active' : ''}
+                    key={record.rowId}
+                    onClick={() => {
+                      setSelectedTree(record);
+                      setSelectedMonitoring(null);
+                    }}
+                    className={
+                      selectedTree?.rowId === record.rowId ? "active" : ""
+                    }
                   >
-                    <td>{record.tree_id || '-'}</td>
-                    <td>{record.farm_id || '-'}</td>
-                    <td>{record.tree_type || '-'}</td>
-                    <td>{record.date_planted || '-'}</td>
-                    <td>-</td>
-                    <td>{record.latitude.toFixed(4)}, {record.longitude.toFixed(4)}</td>
+                    <td>{record.treeId || "-"}</td>
+                    <td>{record.farmId || "-"}</td>
+                    <td>{record.treeType || "-"}</td>
+                    <td>{record.datePlanted || "-"}</td>
+                    <td>{getTreeAge(record.datePlanted)}</td>
+                    <td>
+                      {record.coordinate.latitude.toFixed(4)},{" "}
+                      {record.coordinate.longitude.toFixed(4)}
+                    </td>
                     <td>
                       <button className="view-btn">View</button>
                     </td>
@@ -97,7 +223,9 @@ export default function Records() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7" className="no-data">No records found</td>
+                  <td colSpan="7" className="no-data">
+                    No records found
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -106,58 +234,204 @@ export default function Records() {
 
         {selectedTree && (
           <div className="tree-details-panel">
-            <h3>Tree ID: {selectedTree.tree_id || '-'}</h3>
+            <h3>Tree ID: {selectedTree.treeId || "-"}</h3>
 
             <div className="details-section">
-              <h4>Coffee Tree Information</h4>
-              <div className="detail-row">
-                <span className="label">Tree ID:</span>
-                <span className="value">{selectedTree.tree_id || '-'}</span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Farm ID:</span>
-                <span className="value">{selectedTree.farm_id || '-'}</span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Tree Type:</span>
-                <span className="value">{selectedTree.tree_type || '-'}</span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Date Planted:</span>
-                <span className="value">{selectedTree.date_planted || '-'}</span>
-              </div>
+              <h4>Monitoring History</h4>
+              {selectedTree.history?.length ? (
+                <div className="monitoring-table-wrap">
+                  <table className="monitoring-table">
+                    <thead>
+                      <tr>
+                        <th>Record</th>
+                        <th>Inspection Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedTree.history.map((item, index) => {
+                        const totalRecords = selectedTree.history.length;
+                        const recordNumber = totalRecords - index;
+                        return (
+                          <tr
+                            key={`${selectedTree.rowId}-history-${item.id}`}
+                            className={
+                              selectedMonitoring?.id === item.id ? "active" : ""
+                            }
+                          >
+                            <td>{getOrdinalLabel(recordNumber - 1)} Record</td>
+                            <td>
+                              <button
+                                className="history-date-btn"
+                                onClick={() => setSelectedMonitoring(item)}
+                              >
+                                {formatDate(
+                                  item.analysis?.inspection_date ||
+                                    item.analysis?.created_at ||
+                                    item.capturedAt,
+                                )}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="history-empty">No monitoring history yet.</div>
+              )}
             </div>
 
-            <div className="details-section">
-              <h4>Inspection Result</h4>
-              <div className="detail-row">
-                <span className="label">Disease/s Detected:</span>
-                <span className="value">-</span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Pest/s Detected:</span>
-                <span className="value">-</span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Leaf Chlorosis (Average):</span>
-                <span className="value">-</span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Date of Last Inspection:</span>
-                <span className="value">{new Date(selectedTree.captured_at).toLocaleDateString()}</span>
-              </div>
-            </div>
+            {selectedMonitoring && (
+              <>
+                <div className="details-section">
+                  <h4>Coffee Tree Information</h4>
+                  <div className="detail-row">
+                    <span className="label">Tree ID:</span>
+                    <span className="value">{selectedTree.treeId || "-"}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="label">Farm ID:</span>
+                    <span className="value">{selectedTree.farmId || "-"}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="label">Tree Type:</span>
+                    <span className="value">
+                      {selectedTree.treeType || "-"}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="label">Date Planted:</span>
+                    <span className="value">
+                      {selectedTree.datePlanted || "-"}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="label">Tree Age:</span>
+                    <span className="value">
+                      {getTreeAge(selectedTree.datePlanted)}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="label">GPS Coordinates:</span>
+                    <span className="value">
+                      {selectedMonitoring.coordinate?.latitude !== null &&
+                      selectedMonitoring.coordinate?.longitude !== null
+                        ? `${selectedMonitoring.coordinate.latitude.toFixed(6)}, ${selectedMonitoring.coordinate.longitude.toFixed(6)}`
+                        : `${selectedTree.coordinate.latitude.toFixed(6)}, ${selectedTree.coordinate.longitude.toFixed(6)}`}
+                    </span>
+                  </div>
+                </div>
 
-            <div className="details-section">
-              <h4>Location</h4>
-              <div className="detail-row">
-                <span className="label">GPS Coordinates:</span>
-                <span className="value">{selectedTree.latitude.toFixed(6)}, {selectedTree.longitude.toFixed(6)}</span>
-              </div>
-            </div>
+                <div className="details-section">
+                  <h4>Inspection Result</h4>
+                  <div className="detail-row">
+                    <span className="label">Disease/s Detected:</span>
+                    <span className="value">
+                      {renderDetectedList(
+                        selectedMonitoring.analysis?.diseases_detected,
+                      )}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="label">Pest/s Detected:</span>
+                    <span className="value">
+                      {renderDetectedList(
+                        selectedMonitoring.analysis?.pests_detected,
+                      )}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="label">Leaf Chlorosis:</span>
+                    <span className="value value-multiline">
+                      {getChlorosisLines(selectedMonitoring.analysis).length > 0
+                        ? getChlorosisLines(selectedMonitoring.analysis).map(
+                            (line) => (
+                              <span
+                                key={`detail-${selectedMonitoring.id}-${line}`}
+                                className="chlorosis-line"
+                              >
+                                {line}
+                              </span>
+                            ),
+                          )
+                        : "None"}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="label">Date of Last Inspection:</span>
+                    <span className="value">
+                      {formatDate(
+                        selectedMonitoring.analysis?.inspection_date ||
+                          selectedMonitoring.analysis?.created_at ||
+                          selectedMonitoring.capturedAt,
+                      )}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="details-section">
+                  <h4>Uploaded Images</h4>
+                  {selectedMonitoring.imageUrls?.length ? (
+                    <div className="record-image-grid">
+                      {selectedMonitoring.imageUrls.map((imageUrl, index) => (
+                        <button
+                          key={`${selectedMonitoring.id}-image-${index}`}
+                          type="button"
+                          className="record-tree-image-button"
+                          onClick={() =>
+                            setSelectedImage({
+                              src: imageUrl,
+                              alt: `Tree ${selectedTree.treeId} upload ${index + 1}`,
+                            })
+                          }
+                        >
+                          <img
+                            src={imageUrl}
+                            alt={`Tree ${selectedTree.treeId} upload ${index + 1}`}
+                            className="record-tree-image"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="history-empty">
+                      No uploaded images for this monitoring record.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
+
+      {selectedImage && (
+        <div
+          className="image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div
+            className="image-lightbox-content"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="image-lightbox-close"
+              onClick={() => setSelectedImage(null)}
+            >
+              Close
+            </button>
+            <img
+              src={selectedImage.src}
+              alt={selectedImage.alt}
+              className="image-lightbox-image"
+            />
+          </div>
+        </div>
+      )}
     </div>
-  )
+  );
 }

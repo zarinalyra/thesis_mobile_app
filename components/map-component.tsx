@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import React, { useRef, useEffect, useState } from 'react';
+import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import { View, StyleSheet } from 'react-native';
 import { ThemedText } from './themed-text';
 
@@ -26,6 +26,7 @@ const FARM_REGION = {
 
 export default function MapComponent({ markers, onMapPress, onMarkerPress, farmName }: MapComponentProps) {
   const mapRef = useRef<MapView>(null);
+  const [region, setRegion] = useState<Region>(FARM_REGION);
 
   const handleMapReady = () => {
     mapRef.current?.animateToRegion(FARM_REGION, 500);
@@ -39,6 +40,18 @@ export default function MapComponent({ markers, onMapPress, onMarkerPress, farmN
     mapRef.current.animateToRegion(FARM_REGION, 500);
   }, [markers.length]);
 
+  const getMarkerScale = () => {
+    if (region.latitudeDelta <= 0.00045) {
+      return 0.7;
+    }
+
+    if (region.latitudeDelta <= 0.0009) {
+      return 0.8;
+    }
+
+    return 0.9;
+  };
+
   return (
     <View style={styles.container}>
       <MapView
@@ -48,20 +61,29 @@ export default function MapComponent({ markers, onMapPress, onMarkerPress, farmN
         mapType="hybrid"
         initialRegion={FARM_REGION}
         onMapReady={handleMapReady}
+        onRegionChangeComplete={(nextRegion) => setRegion(nextRegion)}
         onPress={onMapPress}
         showsUserLocation
         showsMyLocationButton
       >
-        {markers.map((marker) => (
-          <Marker
-            key={marker.id}
-            coordinate={marker.coordinate}
-            title={marker.title}
-            description={marker.hasDisease ? 'Disease detected' : 'Healthy tree'}
-            pinColor={marker.hasDisease ? '#FF9800' : '#4CAF50'}
-            onPress={() => onMarkerPress?.(marker)}
-          />
-        ))}
+        {markers.map((marker) => {
+          const markerScale = getMarkerScale();
+          const markerHasDisease =
+            marker.hasDisease === true ||
+            String(marker.hasDisease).toLowerCase() === 'true';
+
+          return (
+            <Marker
+              key={marker.id}
+              coordinate={marker.coordinate}
+              title={marker.title}
+              description={markerHasDisease ? 'Disease detected' : 'Healthy tree'}
+              pinColor={markerHasDisease ? '#FF9800' : '#4CAF50'}
+              onPress={() => onMarkerPress?.(marker)}
+              style={{ transform: [{ scale: markerScale }] }}
+            />
+          );
+        })}
       </MapView>
       {markers.length === 0 && (
         <View style={styles.emptyState}>
