@@ -14,10 +14,20 @@ from flask import Flask, request, jsonify
 from datetime import date
 from chlorosis import compute_chlorosis_from_bytes
 import urllib.request
+import os
 import cv2
+import httpx
 import numpy as np
 
 app = Flask(__name__)
+
+# URL of the Hugging Face Space that runs SWAT-DCNN inference.
+# Set this in Render → Environment, e.g.
+#   HF_SPACE_URL=https://yourname-swat-dcnn.hf.space
+HF_SPACE_URL = os.getenv("HF_SPACE_URL", "").rstrip("/")
+
+# HF Spaces sleep after inactivity; first request can cold-start for ~30–60s.
+HF_TIMEOUT_SECONDS = 300
 
 # Maximum dimension for any side of the image before processing.
 # 480px is sufficient for color-based chlorosis detection and keeps
@@ -57,26 +67,101 @@ def resize_image_bytes(image_bytes: bytes, max_dim: int = MAX_IMAGE_DIM) -> byte
 
 
 # =============================================================================
-# PLACEHOLDER — replace this with your actual SWAT-DCNN inference function
+# SWAT-DCNN — delegated to the Hugging Face Space (heavy TF inference).
+# Returns the same shape the rest of this file expects:
+#   {"stage1": str, "stage2": str|None, "stage3": str|None, "confidence": float}
+# Falls back to a safe placeholder if HF is unreachable so chlorosis still
+# surfaces to the mobile app instead of failing the whole /analyze call.
 # =============================================================================
-def run_swat_dcnn(image_bytes: bytes) -> dict:
+def _safe_swat_default() -> dict:
     return {
         "stage1":     "Healthy",
         "stage2":     None,
         "stage3":     None,
-        "confidence": 0.0
+        "confidence": 0.0,
+    }
+
+
+def run_swat_dcnn(image_url: str) -> dict:
+    if not HF_SPACE_URL:
+        print("HF_SPACE_URL not set; returning placeholder SWAT result.")
+        return _safe_swat_default()
+
+    try:
+        resp = httpx.post(
+            f"{HF_SPACE_URL}/predict",
+            json={"image_url": image_url},
+            timeout=HF_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+    except Exception as e:
+        print(f"HF Space call failed for {image_url}: {e}")
+        return _safe_swat_default()
+
+    return {
+        "stage1":     result.get("stage1", "Healthy"),
+        "stage2":     result.get("stage2"),
+        "stage3":     result.get("stage3"),
+        "confidence": float(result.get("confidence", 0.0) or 0.0),
     }
 
 
 # =============================================================================
-# HELPER — pick the best SWAT-DCNN result across all images
+# LABEL SETS
 # =============================================================================
-def pick_best_detection(detections: list) -> dict:
-    unhealthy = [d for d in detections if d["stage1"] == "Unhealthy"]
-    if unhealthy:
-        return max(unhealthy, key=lambda d: d["confidence"])
-    else:
-        return max(detections, key=lambda d: d["confidence"])
+PEST_LABELS    = {"CLM", "RSM"}
+DISEASE_LABELS = {"CLR", "BSL", "SM", "CLS", "PLS"}
+
+
+# =============================================================================
+# AGGREGATION — union across all images, one result per inspection
+# =============================================================================
+def aggregate_results(swat_results: list, chlorosis_results: list) -> dict:
+    diseases       = set()
+    pests          = set()
+    confidences    = []
+    healthy_count  = 0
+    disease_count  = 0
+    image_findings = []
+
+    for i, (swat, chlorosis) in enumerate(zip(swat_results, chlorosis_results)):
+        if swat["stage1"] == "Healthy":
+            healthy_count += 1
+        else:
+            disease_count += 1
+
+        for label in [swat.get("stage2"), swat.get("stage3")]:
+            if label is None:
+                continue
+            if label in PEST_LABELS:
+                pests.add(label)
+            elif label in DISEASE_LABELS:
+                diseases.add(label)
+
+        if swat["stage1"] == "Unhealthy" and swat.get("confidence", 0) > 0:
+            confidences.append(swat["confidence"])
+
+        image_findings.append({
+            "image_index":          i,
+            "stage1":               swat["stage1"],
+            "stage2":               swat.get("stage2"),
+            "stage3":               swat.get("stage3"),
+            "confidence":           swat.get("confidence", 0),
+            "chlorosis_percentage": chlorosis.get("chlorosis_percentage", 0),
+            "chlorosis_valid":      chlorosis.get("valid", False),
+            "glare_percentage":     chlorosis.get("glare_percentage", 0),
+        })
+
+    return {
+        "diseases_detected":   list(diseases),
+        "pests_detected":      list(pests),
+        "confidence":          round(max(confidences), 4) if confidences else 0,
+        "total_images":        len(swat_results),
+        "images_with_disease": disease_count,
+        "images_healthy":      healthy_count,
+        "image_findings":      image_findings,
+    }
 
 
 # =============================================================================
@@ -128,7 +213,8 @@ def analyze():
         return jsonify({"error": "At least 3 image URLs are required."}), 400
 
     # --- Download, resize, and process each image ---
-    chlorosis_readings = []
+    chlorosis_readings = []   # trimmed — for the response chlorosis_readings field
+    chlorosis_results  = []   # full (includes glare_percentage) — for aggregate_results
     swat_results       = []
 
     for i, url in enumerate(image_urls, start=1):
@@ -143,40 +229,38 @@ def analyze():
 
         # Chlorosis computation
         chlorosis_result = compute_chlorosis_from_bytes(image_bytes)
+        chlorosis_results.append(chlorosis_result)
+
+        # SWAT-DCNN inference (heavy work runs on the HF Space, so we just
+        # forward the original Supabase URL — no need to upload bytes again).
+        swat_result = run_swat_dcnn(url)
+        swat_results.append(swat_result)
+
         chlorosis_readings.append({
             "image_id":             i,
             "chlorosis_percentage": chlorosis_result["chlorosis_percentage"],
             "valid":                chlorosis_result["valid"],
+            "stage1":               swat_result["stage1"],
+            "stage2":               swat_result.get("stage2"),
+            "stage3":               swat_result.get("stage3"),
         })
 
-        # SWAT-DCNN inference
-        swat_result = run_swat_dcnn(image_bytes)
-        swat_results.append(swat_result)
-
-    # --- Pick best SWAT-DCNN result ---
-    best_detection = pick_best_detection(swat_results)
-
-    PEST_LABELS = {"Coffee Leaf Miner", "Red Spider Mite"}
-    diseases_detected = []
-    pests_detected    = []
-
-    for label in [best_detection.get("stage2"), best_detection.get("stage3")]:
-        if label is None:
-            continue
-        if label in PEST_LABELS:
-            pests_detected.append(label)
-        else:
-            diseases_detected.append(label)
+    # --- Aggregate across all images (union of diseases/pests) ---
+    aggregated = aggregate_results(swat_results, chlorosis_results)
 
     response = {
-        "tree_id":         tree_id,
-        "inspection_date": str(date.today()),
+        "tree_id":             tree_id,
+        "inspection_date":     str(date.today()),
         "detection": {
-            "diseases_detected": diseases_detected,
-            "pests_detected":    pests_detected,
-            "confidence":        round(best_detection["confidence"], 4),
+            "diseases_detected": aggregated["diseases_detected"],
+            "pests_detected":    aggregated["pests_detected"],
+            "confidence":        aggregated["confidence"],
         },
-        "chlorosis_readings": chlorosis_readings,
+        "total_images":        aggregated["total_images"],
+        "images_with_disease": aggregated["images_with_disease"],
+        "images_healthy":      aggregated["images_healthy"],
+        "chlorosis_readings":  chlorosis_readings,
+        "image_findings":      aggregated["image_findings"],
     }
 
     return jsonify(response), 200
