@@ -18,6 +18,7 @@ import os
 import cv2
 import httpx
 import numpy as np
+import time
 
 app = Flask(__name__)
 
@@ -83,20 +84,37 @@ def _safe_swat_default() -> dict:
 
 
 def run_swat_dcnn(image_url: str) -> dict:
+    short_url = image_url.split("/")[-1][:60]
+
     if not HF_SPACE_URL:
-        print("HF_SPACE_URL not set; returning placeholder SWAT result.")
+        print(f"[swat] HF_SPACE_URL not set — placeholder for {short_url}")
         return _safe_swat_default()
 
+    print(f"[swat] → calling HF Space for {short_url}", flush=True)
+    t0 = time.time()
     try:
         resp = httpx.post(
             f"{HF_SPACE_URL}/predict",
             json={"image_url": image_url},
             timeout=HF_TIMEOUT_SECONDS,
         )
+        elapsed = round(time.time() - t0, 2)
+        print(f"[swat] ← HTTP {resp.status_code} in {elapsed}s for {short_url}", flush=True)
         resp.raise_for_status()
         result = resp.json()
+        print(f"[swat]   stage1={result.get('stage1')} stage2={result.get('stage2')} "
+              f"stage3={result.get('stage3')} conf={result.get('confidence')}", flush=True)
+    except httpx.TimeoutException as e:
+        elapsed = round(time.time() - t0, 2)
+        print(f"[swat] TIMEOUT after {elapsed}s for {short_url}: {e}", flush=True)
+        return _safe_swat_default()
+    except httpx.HTTPStatusError as e:
+        elapsed = round(time.time() - t0, 2)
+        print(f"[swat] HTTP ERROR {e.response.status_code} after {elapsed}s for {short_url}", flush=True)
+        return _safe_swat_default()
     except Exception as e:
-        print(f"HF Space call failed for {image_url}: {e}")
+        elapsed = round(time.time() - t0, 2)
+        print(f"[swat] ERROR after {elapsed}s for {short_url}: {type(e).__name__}: {e}", flush=True)
         return _safe_swat_default()
 
     return {
