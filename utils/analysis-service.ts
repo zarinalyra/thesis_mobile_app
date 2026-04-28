@@ -8,11 +8,26 @@
 
 export const FLASK_SERVER_URL = "https://thesis-mobile-app-v15u.onrender.com";
 
-// How long to wait for Flask before giving up (90 seconds).
-const TIMEOUT_MS = 90000;
+// How long to wait for Flask before giving up (120 seconds).
+const TIMEOUT_MS = 120000;
 
 // How many times to attempt before failing.
 const MAX_RETRIES = 2;
+
+// ─────────────────────────────────────────────────────────────
+// PRE-WARM
+// Render free tier sleeps after 15 min. Ping / as soon as the
+// submit flow starts so the server wakes up during the upload
+// phase, before we need /analyze.
+// ─────────────────────────────────────────────────────────────
+export async function warmUpFlask(): Promise<void> {
+  try {
+    await fetchWithTimeout(FLASK_SERVER_URL, { method: "GET" }, 15000);
+    console.log("Flask warm-up OK");
+  } catch {
+    console.warn("Flask warm-up ping failed (server may still wake in time)");
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -31,6 +46,9 @@ export interface AnalysisResult {
     pests_detected: string[];
     confidence: number;
   };
+  total_images: number;
+  images_with_disease: number;
+  images_healthy: number;
   chlorosis_readings: ChlorosisReading[];
 }
 
@@ -42,6 +60,9 @@ interface RawAnalysisResult {
     pests_detected: string[];
     confidence: number;
   };
+  total_images: number;
+  images_with_disease: number;
+  images_healthy: number;
   chlorosis_readings: Array<{
     image_id: number;
     chlorosis_percentage: number;

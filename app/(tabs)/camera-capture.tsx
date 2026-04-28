@@ -4,6 +4,7 @@ import { usePhotos } from "@/context/PhotoContext";
 import { extractExifData } from "@/utils/exif-extractor";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as Location from "expo-location";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef } from "react";
@@ -22,14 +23,15 @@ const AVAILABLE_HEIGHT = SCREEN_HEIGHT - HEADER_HEIGHT - BOTTOM_CONTROLS;
 const ROI_WIDTH = SCREEN_WIDTH * 0.65;
 const ROI_HEIGHT = AVAILABLE_HEIGHT * 0.85;
 const ROI_LEFT = (SCREEN_WIDTH - ROI_WIDTH) / 2;
-const ROI_TOP = HEADER_HEIGHT + (AVAILABLE_HEIGHT - ROI_HEIGHT) / 2;
+// Camera-relative: measured from the top of the camera container, not the screen.
+const ROI_TOP = (AVAILABLE_HEIGHT - ROI_HEIGHT) / 2;
 
 export default function CameraCaptureScreen() {
   // ── isUpdate tells us if this is an Update Card flow or Add Tree flow ──
   const { farmId, treeId, treeType, datePlanted, isUpdate } =
     useLocalSearchParams();
   const router = useRouter();
-  const { photos, setPhotos, addPhoto, treeDetails } = usePhotos();
+  const { photos, addPhoto, treeDetails } = usePhotos();
   const [permission, requestPermission] = useCameraPermissions();
   const [locationPermission, requestLocationPermission] =
     Location.useForegroundPermissions();
@@ -66,10 +68,56 @@ export default function CameraCaptureScreen() {
       ]).start();
 
       // Capture photo
-      const result = await cameraRef.current.takePictureAsync({
+      const raw = await cameraRef.current.takePictureAsync({
         quality: 0.8,
         exif: true,
       });
+
+      // Crop to ROI box — fall back to full image if anything goes wrong.
+      let result = raw;
+      try {
+        const imgW = raw.width;
+        const imgH = raw.height;
+
+        if (imgW > 0 && imgH > 0) {
+          const viewW = SCREEN_WIDTH;
+          const viewH = SCREEN_HEIGHT - HEADER_HEIGHT;
+
+          // Cover-mode scale: image px per logical screen px.
+          const coverScale = Math.max(viewW / imgW, viewH / imgH);
+
+          // Logical px of scaled image that overflow beyond each edge.
+          const overflowX = (imgW * coverScale - viewW) / 2;
+          const overflowY = (imgH * coverScale - viewH) / 2;
+
+          // ROI position relative to the camera view top-left (ROI_TOP is already camera-relative).
+          const roiViewX = ROI_LEFT;
+          const roiViewY = ROI_TOP;
+
+          const cropX = Math.round((roiViewX + overflowX) / coverScale);
+          const cropY = Math.round((roiViewY + overflowY) / coverScale);
+          const cropW = Math.round(ROI_WIDTH / coverScale);
+          const cropH = Math.round(ROI_HEIGHT / coverScale);
+
+          const safeX = Math.max(0, Math.min(cropX, imgW - 1));
+          const safeY = Math.max(0, Math.min(cropY, imgH - 1));
+          const safeW = Math.min(cropW, imgW - safeX);
+          const safeH = Math.min(cropH, imgH - safeY);
+
+          console.log(`Crop: x=${safeX} y=${safeY} w=${safeW} h=${safeH} (img ${imgW}x${imgH})`);
+
+          if (safeW > 0 && safeH > 0) {
+            const cropped = await ImageManipulator.manipulateAsync(
+              raw.uri,
+              [{ crop: { originX: safeX, originY: safeY, width: safeW, height: safeH } }],
+              { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+            );
+            result = { ...raw, uri: cropped.uri, width: cropped.width, height: cropped.height };
+          }
+        }
+      } catch (cropErr) {
+        console.warn("ROI crop failed — using full image:", cropErr);
+      }
 
       // Add photo to list
       const placeholderPhoto = {
@@ -127,7 +175,7 @@ export default function CameraCaptureScreen() {
         });
       }
     } catch (e) {
-      console.warn("Failed to take photo", e);
+      console.error("Failed to take photo:", e);
     }
   };
 

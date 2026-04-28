@@ -1,6 +1,6 @@
 import { ThemedText } from "@/components/themed-text";
 import { supabase } from "@/supabase";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Animated,
@@ -89,16 +89,10 @@ export default function TreeDetailsCard({
   const [inspectionImages, setInspectionImages] = useState<string[]>([]);
   const [loadingImages, setLoadingImages] = useState(false);
 
-  // ── Fetch every time the card opens ───────────────────────
-  useEffect(() => {
-    fetchLatestAnalysis();
-  }, [tree.treeId, tree.id]);
-
-  const fetchLatestAnalysis = async () => {
+  const fetchLatestAnalysis = useCallback(async () => {
     setLoadingAnalysis(true);
     setInspectionImages([]);
     try {
-      // Order by created_at so same-day updates work correctly
       const { data, error } = await supabase
         .from("analysis_results")
         .select(
@@ -115,8 +109,6 @@ export default function TreeDetailsCard({
       } else {
         console.log("Latest analysis fetched:", JSON.stringify(data));
         setAnalysis(data as AnalysisData);
-
-        // Immediately fetch images for this inspection
         const ids = Array.isArray(data.image_ids) ? data.image_ids : [];
         if (ids.length > 0) {
           fetchInspectionImages(ids);
@@ -128,7 +120,11 @@ export default function TreeDetailsCard({
     } finally {
       setLoadingAnalysis(false);
     }
-  };
+  }, [tree.treeId, tree.id]);
+
+  useEffect(() => {
+    fetchLatestAnalysis();
+  }, [fetchLatestAnalysis]);
 
   // Fetch images for the current inspection only, in order (1st to last)
   const fetchInspectionImages = async (imageIds: number[]) => {

@@ -2,7 +2,7 @@ import { ThemedText } from "@/components/themed-text";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { usePhotos } from "@/context/PhotoContext";
 import { supabase } from "@/supabase";
-import { analyzeLeafImages, FLASK_SERVER_URL } from "@/utils/analysis-service";
+import { analyzeLeafImages, warmUpFlask, FLASK_SERVER_URL } from "@/utils/analysis-service";
 import {
   PhotoWithExif,
   uploadImagesOnlyToSupabase,
@@ -81,11 +81,13 @@ export default function PhotoReviewScreen() {
     }
 
     setUploading(true);
+
+    // Fire warm-up ping immediately so Render wakes up while images upload.
+    // Do NOT await — let it run in the background.
+    warmUpFlask();
+
     try {
       // ── STEP 1: Upload images to Supabase first ─────────────
-      // Upload before calling Flask so we can pass public URLs
-      // to Flask instead of raw files. This avoids the multipart
-      // upload being blocked by Render's free tier proxy.
       setStatusMessage("Uploading photos...");
 
       let geotagId: number | null = null;
@@ -115,7 +117,12 @@ export default function PhotoReviewScreen() {
         );
         geotagId = geotagData?.id ?? null;
 
-        const rawExif = geotagData?.raw_exif as any;
+        // raw_exif may come back as a parsed object (jsonb) or a JSON string
+        // (text column). Parse defensively so image_ids is always an array.
+        let rawExif: any = geotagData?.raw_exif;
+        if (typeof rawExif === "string") {
+          try { rawExif = JSON.parse(rawExif); } catch { rawExif = {}; }
+        }
         inspectionImageIds = Array.isArray(rawExif?.image_ids)
           ? rawExif.image_ids
           : Array.isArray(rawExif?.imageIds)
@@ -126,24 +133,35 @@ export default function PhotoReviewScreen() {
         console.log("Add tree image IDs:", inspectionImageIds);
       }
 
-      // Build public Supabase URLs for the uploaded images
+      // Build public Supabase URLs for the uploaded images.
+      // Use loose equality (==) when matching IDs so a string "1" matches
+      // a number 1 — Supabase can return bigint IDs as either type.
       if (inspectionImageIds.length > 0) {
-        const { data: imageRows } = await supabase
+        const { data: imageRows, error: imgQueryError } = await supabase
           .from("images")
           .select("id, file_path")
           .in("id", inspectionImageIds);
 
+        if (imgQueryError) {
+          console.error("images query error:", imgQueryError.message);
+        }
+
         if (imageRows && imageRows.length > 0) {
           inspectionImageUrls = inspectionImageIds
-            .map((id: number) => imageRows.find((r: any) => r.id === id))
+            // eslint-disable-next-line eqeqeq
+            .map((id: number) => imageRows.find((r: any) => r.id == id))
             .filter(Boolean)
             .map(
               (r: any) =>
                 supabase.storage.from("leafImages").getPublicUrl(r.file_path)
                   .data.publicUrl,
             );
-          console.log("Image URLs for Flask:", inspectionImageUrls);
         }
+        console.log(
+          `Built ${inspectionImageUrls.length}/${inspectionImageIds.length} image URLs for Flask`,
+        );
+      } else {
+        console.warn("inspectionImageIds is empty — Flask analysis will be skipped");
       }
 
       // ── STEP 2: Flask analysis using URLs ──────────────────
@@ -151,6 +169,7 @@ export default function PhotoReviewScreen() {
       console.log("=== FLASK CALL START ===");
       console.log("Flask URL:", FLASK_SERVER_URL);
       console.log("Tree ID:", resolvedTreeId);
+      console.log("Image URLs:", inspectionImageUrls);
 
       let analysisResult = null;
 
@@ -161,15 +180,14 @@ export default function PhotoReviewScreen() {
         );
         console.log("Flask result:", JSON.stringify(analysisResult));
       } catch (err: any) {
-        console.warn("Flask failed:", err.message);
+        console.error("Flask analysis failed:", err.message);
         analysisResult = null;
       }
       console.log("=== FLASK CALL END ===");
 
       // ── STEP 3: Save analysis results ──────────────────────
-      // Always save so images are always linked even if Flask failed.
+      // Always insert so image_ids are linked even if Flask failed.
       setStatusMessage("Saving analysis results...");
-      console.log("Saving analysis results...");
 
       const { error: analysisError } = await supabase
         .from("analysis_results")
@@ -188,12 +206,13 @@ export default function PhotoReviewScreen() {
         });
 
       if (analysisError) {
-        console.warn("Analysis save failed:", analysisError.message);
-      } else {
-        console.log(
-          "Analysis results saved with image IDs:",
-          inspectionImageIds,
+        console.error("Analysis insert failed:", analysisError.message);
+        Alert.alert(
+          "Save Error",
+          `Analysis data could not be saved: ${analysisError.message}\n\nCheck that the analysis_results table has an RLS policy allowing inserts.`,
         );
+      } else {
+        console.log("Analysis results saved. image_ids:", inspectionImageIds);
       }
 
       // ── DONE ───────────────────────────────────────────────
