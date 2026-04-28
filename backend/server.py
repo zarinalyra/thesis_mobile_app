@@ -69,17 +69,30 @@ def resize_image_bytes(image_bytes: bytes, max_dim: int = MAX_IMAGE_DIM) -> byte
 
 # =============================================================================
 # SWAT-DCNN — delegated to the Hugging Face Space (heavy TF inference).
-# Returns the same shape the rest of this file expects:
-#   {"stage1": str, "stage2": str|None, "stage3": str|None, "confidence": float}
+#
+# Calls /predict-debug to obtain the full probability vector per stage.
+#
+# Returns:
+#   {
+#     "stage1":       "Healthy" | "Unhealthy",
+#     "stage2":       label | None,
+#     "stage3":       label | None,
+#     "confidence":   float,
+#     "stage2_probs": {label: prob, ...} | None,   # None when stage1=Healthy
+#     "stage3_probs": {label: prob, ...} | None,   # None unless stage2=BSL
+#   }
+#
 # Falls back to a safe placeholder if HF is unreachable so chlorosis still
 # surfaces to the mobile app instead of failing the whole /analyze call.
 # =============================================================================
 def _safe_swat_default() -> dict:
     return {
-        "stage1":     "Healthy",
-        "stage2":     None,
-        "stage3":     None,
-        "confidence": 0.0,
+        "stage1":       "Healthy",
+        "stage2":       None,
+        "stage3":       None,
+        "confidence":   0.0,
+        "stage2_probs": None,
+        "stage3_probs": None,
     }
 
 
@@ -90,20 +103,44 @@ def run_swat_dcnn(image_url: str) -> dict:
         print(f"[swat] HF_SPACE_URL not set — placeholder for {short_url}")
         return _safe_swat_default()
 
-    print(f"[swat] → calling HF Space for {short_url}", flush=True)
+    print(f"[swat] → calling HF Space /predict-debug for {short_url}", flush=True)
     t0 = time.time()
     try:
         resp = httpx.post(
-            f"{HF_SPACE_URL}/predict",
+            f"{HF_SPACE_URL}/predict-debug",
             json={"image_url": image_url},
             timeout=HF_TIMEOUT_SECONDS,
         )
         elapsed = round(time.time() - t0, 2)
         print(f"[swat] ← HTTP {resp.status_code} in {elapsed}s for {short_url}", flush=True)
         resp.raise_for_status()
-        result = resp.json()
-        print(f"[swat]   stage1={result.get('stage1')} stage2={result.get('stage2')} "
-              f"stage3={result.get('stage3')} conf={result.get('confidence')}", flush=True)
+        data = resp.json()
+
+        final   = data.get("final", {})
+        cascade = data.get("cascade", {})
+
+        stage1 = final.get("stage1", "Healthy")
+        stage2 = final.get("stage2")
+        stage3 = final.get("stage3")
+        conf   = float(final.get("confidence", 0.0) or 0.0)
+
+        stage2_probs = None
+        stage3_probs = None
+
+        s2_trace = cascade.get("stage2")
+        if s2_trace and isinstance(s2_trace.get("all_probs"), dict):
+            stage2_probs = {k: round(float(v), 4) for k, v in s2_trace["all_probs"].items()}
+
+        s3_trace = cascade.get("stage3")
+        if s3_trace and isinstance(s3_trace.get("all_probs"), dict):
+            stage3_probs = {k: round(float(v), 4) for k, v in s3_trace["all_probs"].items()}
+
+        print(
+            f"[swat]   stage1={stage1} stage2={stage2} stage3={stage3} "
+            f"conf={conf} s2_probs={stage2_probs is not None} s3_probs={stage3_probs is not None}",
+            flush=True,
+        )
+
     except httpx.TimeoutException as e:
         elapsed = round(time.time() - t0, 2)
         print(f"[swat] TIMEOUT after {elapsed}s for {short_url}: {e}", flush=True)
@@ -118,10 +155,12 @@ def run_swat_dcnn(image_url: str) -> dict:
         return _safe_swat_default()
 
     return {
-        "stage1":     result.get("stage1", "Healthy"),
-        "stage2":     result.get("stage2"),
-        "stage3":     result.get("stage3"),
-        "confidence": float(result.get("confidence", 0.0) or 0.0),
+        "stage1":       stage1,
+        "stage2":       stage2,
+        "stage3":       stage3,
+        "confidence":   conf,
+        "stage2_probs": stage2_probs,
+        "stage3_probs": stage3_probs,
     }
 
 
@@ -141,10 +180,12 @@ def aggregate_results(swat_results: list, chlorosis_results: list) -> dict:
     confidences    = []
     healthy_count  = 0
     disease_count  = 0
-    image_findings = []
+    per_image_results = []
 
     for i, (swat, chlorosis) in enumerate(zip(swat_results, chlorosis_results)):
-        if swat["stage1"] == "Healthy":
+        is_healthy = swat["stage1"] == "Healthy"
+
+        if is_healthy:
             healthy_count += 1
         else:
             disease_count += 1
@@ -157,18 +198,19 @@ def aggregate_results(swat_results: list, chlorosis_results: list) -> dict:
             elif label in DISEASE_LABELS:
                 diseases.add(label)
 
-        if swat["stage1"] == "Unhealthy" and swat.get("confidence", 0) > 0:
+        if not is_healthy and swat.get("confidence", 0) > 0:
             confidences.append(swat["confidence"])
 
-        image_findings.append({
-            "image_index":          i,
-            "stage1":               swat["stage1"],
-            "stage2":               swat.get("stage2"),
-            "stage3":               swat.get("stage3"),
-            "confidence":           swat.get("confidence", 0),
-            "chlorosis_percentage": chlorosis.get("chlorosis_percentage", 0),
-            "chlorosis_valid":      chlorosis.get("valid", False),
-            "glare_percentage":     chlorosis.get("glare_percentage", 0),
+        # Most specific label for this image
+        final_label = swat.get("stage3") or swat.get("stage2") or swat["stage1"]
+
+        per_image_results.append({
+            "image_index":    i + 1,
+            "final_label":    final_label,
+            "stage_1_result": swat["stage1"],
+            "stage_2":        swat.get("stage2_probs"),   # None when Healthy
+            "stage_3":        swat.get("stage3_probs"),   # None unless BSL
+            "chlorosis_pct":  round(chlorosis.get("chlorosis_percentage", 0), 2),
         })
 
     return {
@@ -178,7 +220,7 @@ def aggregate_results(swat_results: list, chlorosis_results: list) -> dict:
         "total_images":        len(swat_results),
         "images_with_disease": disease_count,
         "images_healthy":      healthy_count,
-        "image_findings":      image_findings,
+        "per_image_results":   per_image_results,
     }
 
 
@@ -196,8 +238,7 @@ def analyze():
             "tree_id": "T-001",
             "image_urls": [
                 "https://...supabase.co/.../image1.jpg",
-                "https://...supabase.co/.../image2.jpg",
-                "https://...supabase.co/.../image3.jpg"
+                ...
             ]
         }
 
@@ -206,14 +247,24 @@ def analyze():
             "tree_id": "T-001",
             "inspection_date": "2026-04-20",
             "detection": {
-                "diseases_detected": [],
+                "diseases_detected": ["CLR"],
                 "pests_detected": [],
-                "confidence": 0.0
+                "confidence": 0.72
             },
-            "chlorosis_readings": [
-                {"image_id": 1, "chlorosis_percentage": 3.00, "valid": true},
-                {"image_id": 2, "chlorosis_percentage": 4.50, "valid": true},
-                {"image_id": 3, "chlorosis_percentage": 48.00, "valid": true}
+            "chlorosis_readings": [...],
+            "total_images": 3,
+            "images_with_disease": 2,
+            "images_healthy": 1,
+            "per_image_results": [
+                {
+                    "image_index": 1,
+                    "final_label": "CLR",
+                    "stage_1_result": "Unhealthy",
+                    "stage_2": {"CLR": 0.72, "BSL": 0.21, "SM": 0.07},
+                    "stage_3": null,
+                    "chlorosis_pct": 23.4
+                },
+                ...
             ]
         }
     """
@@ -278,7 +329,7 @@ def analyze():
         "images_with_disease": aggregated["images_with_disease"],
         "images_healthy":      aggregated["images_healthy"],
         "chlorosis_readings":  chlorosis_readings,
-        "image_findings":      aggregated["image_findings"],
+        "per_image_results":   aggregated["per_image_results"],
     }
 
     return jsonify(response), 200

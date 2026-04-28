@@ -13,6 +13,7 @@ interface TreeMarker {
   coordinate: { latitude: number; longitude: number };
   title: string;
   hasDisease: boolean;
+  isAnalyzed: boolean;
   treeId: string;
   treeType: string;
   datePlanted: string;
@@ -97,7 +98,6 @@ export default function FarmMapScreen() {
         Array<{
           rowId: string;
           coordinate: { latitude: number; longitude: number };
-          hasDisease: boolean;
           treeId: string;
           treeType: string;
           datePlanted: string;
@@ -134,7 +134,6 @@ export default function FarmMapScreen() {
             latitude: tree.latitude,
             longitude: tree.longitude,
           },
-          hasDisease: rawExif.has_disease || rawExif.hasDisease || false,
           treeId: String(resolvedTreeId),
           treeType: String(resolvedTreeType),
           datePlanted: String(resolvedDatePlanted),
@@ -170,7 +169,8 @@ export default function FarmMapScreen() {
             title: latest.treeId
               ? `Tree ${latest.treeId}`
               : `Tree ${latest.rowId}`,
-            hasDisease: latest.hasDisease,
+            hasDisease: false,
+            isAnalyzed: false,
             treeId: latest.treeId,
             treeType: latest.treeType,
             datePlanted: latest.datePlanted,
@@ -213,6 +213,33 @@ export default function FarmMapScreen() {
         }
       }
 
+      // ── Query analysis_results to determine pin state per tree ──
+      const allTreeIds = treeMarkers.map((m) => m.treeId).filter(Boolean);
+      const analysisMap = new Map<
+        string,
+        { isAnalyzed: boolean; hasDisease: boolean }
+      >();
+
+      if (allTreeIds.length > 0) {
+        const { data: analysisRows } = await supabase
+          .from("analysis_results")
+          .select("tree_id, diseases_detected, inspection_date")
+          .in("tree_id", allTreeIds)
+          .order("inspection_date", { ascending: false });
+
+        for (const row of analysisRows || []) {
+          if (!analysisMap.has(row.tree_id)) {
+            const diseases = Array.isArray(row.diseases_detected)
+              ? row.diseases_detected
+              : [];
+            analysisMap.set(row.tree_id, {
+              isAnalyzed: true,
+              hasDisease: diseases.length > 0,
+            });
+          }
+        }
+      }
+
       const markersWithImages = treeMarkers.map((marker) => {
         const latestImages = marker.imageIds
           .map((imageId) => imageById.get(imageId))
@@ -231,7 +258,17 @@ export default function FarmMapScreen() {
                 .data.publicUrl,
           );
 
-        return { ...marker, latestImages };
+        const analysis = analysisMap.get(marker.treeId) ?? {
+          isAnalyzed: false,
+          hasDisease: false,
+        };
+
+        return {
+          ...marker,
+          latestImages,
+          isAnalyzed: analysis.isAnalyzed,
+          hasDisease: analysis.hasDisease,
+        };
       });
 
       console.log("Tree markers:", treeMarkers);

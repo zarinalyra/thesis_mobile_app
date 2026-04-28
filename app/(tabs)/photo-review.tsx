@@ -2,12 +2,12 @@ import { ThemedText } from "@/components/themed-text";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { usePhotos } from "@/context/PhotoContext";
 import { supabase } from "@/supabase";
-import { analyzeLeafImages, warmUpFlask, FLASK_SERVER_URL } from "@/utils/analysis-service";
 import {
   PhotoWithExif,
   uploadImagesOnlyToSupabase,
   uploadPhotosToSupabase,
 } from "@/utils/exif-extractor";
+import * as Location from "expo-location";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import {
@@ -25,6 +25,33 @@ import {
 const { width } = Dimensions.get("window");
 const CARD_SIZE = (width - 48) / 2;
 
+// ─────────────────────────────────────────────────────────────
+// GPS HELPERS
+// ─────────────────────────────────────────────────────────────
+const toRad = (val: number) => (val * Math.PI) / 180;
+
+function haversineDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// ─────────────────────────────────────────────────────────────
+// SCREEN
+// ─────────────────────────────────────────────────────────────
 export default function PhotoReviewScreen() {
   const { farmId, treeId, treeType, datePlanted, isUpdate } =
     useLocalSearchParams();
@@ -64,6 +91,7 @@ export default function PhotoReviewScreen() {
     setPhotos(photos.filter((p) => p.uri !== uri));
   };
 
+  // ── SUBMIT ────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!resolvedTreeId || !resolvedTreeType || !resolvedDatePlanted) {
       Alert.alert(
@@ -82,29 +110,124 @@ export default function PhotoReviewScreen() {
 
     setUploading(true);
 
-    // Fire warm-up ping immediately so Render wakes up while images upload.
-    // Do NOT await — let it run in the background.
-    warmUpFlask();
-
     try {
-      // ── STEP 1: Upload images to Supabase first ─────────────
-      setStatusMessage("Uploading photos...");
-
-      let geotagId: number | null = null;
-      let inspectionImageIds: number[] = [];
-      let inspectionImageUrls: string[] = [];
-
       if (isUpdateFlow) {
-        console.log("Update flow — uploading images only");
-        inspectionImageIds = await uploadImagesOnlyToSupabase(
+        // ── STEP 1: Get original GPS from the existing geotag ────
+        setStatusMessage("Validating location…");
+        const { data: originalGeotag, error: geoFetchError } = await supabase
+          .from("geotags")
+          .select("id, image_id, raw_exif, latitude, longitude")
+          .eq("tree_id", resolvedTreeId)
+          .limit(1)
+          .single();
+
+        if (geoFetchError || !originalGeotag) {
+          throw new Error("Could not find the original tree location.");
+        }
+
+        // ── STEP 2: Get current device GPS ──────────────────────
+        let currentLocation: { latitude: number; longitude: number } | null =
+          null;
+        try {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          currentLocation = {
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          };
+        } catch {
+          throw new Error(
+            "Could not get your current location. Please enable location services and try again.",
+          );
+        }
+
+        // ── STEP 3: Haversine distance ───────────────────────────
+        const origLat = Number(originalGeotag.latitude);
+        const origLon = Number(originalGeotag.longitude);
+
+        // If the original geotag has no valid GPS, skip distance check
+        const hasOriginalGps =
+          origLat !== 0 || origLon !== 0;
+
+        if (hasOriginalGps) {
+          const distance = haversineDistance(
+            origLat,
+            origLon,
+            currentLocation.latitude,
+            currentLocation.longitude,
+          );
+
+          console.log(
+            `[GPS check] distance to original tree: ${distance.toFixed(1)}m`,
+          );
+
+          // ── STEP 4: Decision ─────────────────────────────────
+          if (distance > 5) {
+            clearPhotos();
+            Alert.alert(
+              "Wrong Location",
+              "Your current location is too far from this tree's recorded position. Please move closer to the correct tree and retake the photos to get accurate GPS coordinates.",
+              [
+                {
+                  text: "Retake Photos",
+                  onPress: () =>
+                    router.push({
+                      pathname: "/(tabs)/camera-capture",
+                      params: {
+                        farmId: String(farmId),
+                        treeId: resolvedTreeId,
+                        treeType: resolvedTreeType,
+                        datePlanted: resolvedDatePlanted,
+                        isUpdate: "true",
+                      },
+                    }),
+                },
+              ],
+            );
+            return;
+          }
+        }
+
+        // ── STEP 5: Within 5m — upload images, update geotag ────
+        // GPS columns (latitude, longitude, altitude, location) are
+        // NEVER updated on the Update Card flow.
+        setStatusMessage("Uploading photos…");
+        const imageIds = await uploadImagesOnlyToSupabase(
           supabase,
           photos,
           farmId as string,
         );
-        console.log("Update image IDs:", inspectionImageIds);
+        console.log("Update image IDs:", imageIds);
+
+        let rawExif: any = originalGeotag.raw_exif;
+        if (typeof rawExif === "string") {
+          try {
+            rawExif = JSON.parse(rawExif);
+          } catch {
+            rawExif = {};
+          }
+        }
+
+        const { error: updateError } = await supabase
+          .from("geotags")
+          .update({
+            image_id: imageIds[0] ?? originalGeotag.image_id,
+            captured_at: new Date().toISOString(),
+            raw_exif: { ...rawExif, image_ids: imageIds, imageIds },
+          })
+          .eq("id", originalGeotag.id);
+
+        if (updateError) {
+          console.error("Geotag update error:", updateError.message);
+        } else {
+          console.log("Geotag updated for tree:", resolvedTreeId);
+        }
       } else {
-        console.log("Add tree flow — uploading with geotag");
-        const geotagData = await uploadPhotosToSupabase(
+        // ── Add Tree flow ───────────────────────────────────────
+        // uploadPhotosToSupabase handles images + geotag INSERT.
+        setStatusMessage("Uploading photos…");
+        await uploadPhotosToSupabase(
           supabase,
           photos,
           farmId as string,
@@ -115,125 +238,38 @@ export default function PhotoReviewScreen() {
             datePlanted: resolvedDatePlanted,
           },
         );
-        geotagId = geotagData?.id ?? null;
-
-        // raw_exif may come back as a parsed object (jsonb) or a JSON string
-        // (text column). Parse defensively so image_ids is always an array.
-        let rawExif: any = geotagData?.raw_exif;
-        if (typeof rawExif === "string") {
-          try { rawExif = JSON.parse(rawExif); } catch { rawExif = {}; }
-        }
-        inspectionImageIds = Array.isArray(rawExif?.image_ids)
-          ? rawExif.image_ids
-          : Array.isArray(rawExif?.imageIds)
-            ? rawExif.imageIds
-            : [];
-
-        console.log("Add tree geotag ID:", geotagId);
-        console.log("Add tree image IDs:", inspectionImageIds);
+        console.log("Add tree upload complete for:", resolvedTreeId);
       }
 
-      // Build public Supabase URLs for the uploaded images.
-      // Use loose equality (==) when matching IDs so a string "1" matches
-      // a number 1 — Supabase can return bigint IDs as either type.
-      if (inspectionImageIds.length > 0) {
-        const { data: imageRows, error: imgQueryError } = await supabase
-          .from("images")
-          .select("id, file_path")
-          .in("id", inspectionImageIds);
-
-        if (imgQueryError) {
-          console.error("images query error:", imgQueryError.message);
-        }
-
-        if (imageRows && imageRows.length > 0) {
-          inspectionImageUrls = inspectionImageIds
-            // eslint-disable-next-line eqeqeq
-            .map((id: number) => imageRows.find((r: any) => r.id == id))
-            .filter(Boolean)
-            .map(
-              (r: any) =>
-                supabase.storage.from("leafImages").getPublicUrl(r.file_path)
-                  .data.publicUrl,
-            );
-        }
-        console.log(
-          `Built ${inspectionImageUrls.length}/${inspectionImageIds.length} image URLs for Flask`,
-        );
-      } else {
-        console.warn("inspectionImageIds is empty — Flask analysis will be skipped");
-      }
-
-      // ── STEP 2: Flask analysis using URLs ──────────────────
-      setStatusMessage("Analyzing leaf images...");
-      console.log("=== FLASK CALL START ===");
-      console.log("Flask URL:", FLASK_SERVER_URL);
-      console.log("Tree ID:", resolvedTreeId);
-      console.log("Image URLs:", inspectionImageUrls);
-
-      let analysisResult = null;
-
-      try {
-        analysisResult = await analyzeLeafImages(
-          inspectionImageUrls,
-          resolvedTreeId,
-        );
-        console.log("Flask result:", JSON.stringify(analysisResult));
-      } catch (err: any) {
-        console.error("Flask analysis failed:", err.message);
-        analysisResult = null;
-      }
-      console.log("=== FLASK CALL END ===");
-
-      // ── STEP 3: Save analysis results ──────────────────────
-      // Always insert so image_ids are linked even if Flask failed.
-      setStatusMessage("Saving analysis results...");
-
-      const { error: analysisError } = await supabase
-        .from("analysis_results")
-        .insert({
-          tree_id: resolvedTreeId,
-          farm_id: farmId,
-          geotag_id: geotagId,
-          inspection_date:
-            analysisResult?.inspection_date ??
-            new Date().toISOString().slice(0, 10),
-          diseases_detected: analysisResult?.detection.diseases_detected ?? [],
-          pests_detected: analysisResult?.detection.pests_detected ?? [],
-          confidence: analysisResult?.detection.confidence ?? 0,
-          chlorosis_readings: analysisResult?.chlorosis_readings ?? [],
-          image_ids: inspectionImageIds,
-        });
-
-      if (analysisError) {
-        console.error("Analysis insert failed:", analysisError.message);
-        Alert.alert(
-          "Save Error",
-          `Analysis data could not be saved: ${analysisError.message}\n\nCheck that the analysis_results table has an RLS policy allowing inserts.`,
-        );
-      } else {
-        console.log("Analysis results saved. image_ids:", inspectionImageIds);
-      }
-
-      // ── DONE ───────────────────────────────────────────────
+      // ── Done ────────────────────────────────────────────────
       setStatusMessage("");
-      alert(
-        isUpdateFlow
-          ? "Card updated successfully!"
-          : "Tree added successfully!",
-      );
       clearPhotos();
-      router.push(`/(tabs)/farm-map?farmId=${farmId}`);
+      Alert.alert(
+        isUpdateFlow ? "Photos Updated" : "Tree Added",
+        isUpdateFlow
+          ? "New photos saved. Open the tree card and tap Analyze when you have a stable connection."
+          : "Tree added. Open the tree card and tap Analyze when you have a stable connection.",
+        [
+          {
+            text: "OK",
+            onPress: () => router.push(`/(tabs)/farm-map?farmId=${farmId}`),
+          },
+        ],
+      );
     } catch (error: any) {
       console.error("Submit error:", error);
       setStatusMessage("");
-      alert(`Failed to upload: ${error.message || "Unknown error"}`);
+      Alert.alert(
+        "Upload Failed",
+        error.message || "Unknown error. Please try again.",
+      );
     } finally {
       setUploading(false);
       setStatusMessage("");
     }
   };
 
+  // ── RENDER ────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <View style={styles.header}>

@@ -108,7 +108,59 @@ function averageExifData(photos: PhotoWithExif[]): {
   }
 
   if (validCount === 0) {
-    throw new Error("No photos with valid GPS coordinates");
+    // All readings exceeded the accuracy threshold.
+    // Fall back to the single most-accurate available reading instead of failing.
+    let bestPhoto: PhotoWithExif | null = null;
+    let bestAccuracy = Infinity;
+
+    for (const photo of photos) {
+      const lat = photo.exif.latitude ?? photo.location?.latitude;
+      const lon = photo.exif.longitude ?? photo.location?.longitude;
+      if (lat == null || lon == null || (lat === 0 && lon === 0)) continue;
+      const acc = photo.exif.accuracy ?? photo.location?.accuracy ?? Infinity;
+      if (acc < bestAccuracy) {
+        bestAccuracy = acc;
+        bestPhoto = photo;
+      }
+    }
+
+    if (!bestPhoto) {
+      throw new Error("No photos with valid GPS coordinates");
+    }
+
+    console.warn(
+      `All GPS readings exceeded ${ACCURACY_THRESHOLD_METERS}m threshold. ` +
+        `Using best available (${bestAccuracy.toFixed(0)}m).`,
+    );
+
+    const lat =
+      bestPhoto.exif.latitude ?? bestPhoto.location?.latitude ?? 0;
+    const lon =
+      bestPhoto.exif.longitude ?? bestPhoto.location?.longitude ?? 0;
+    const alt =
+      bestPhoto.exif.altitude ?? bestPhoto.location?.altitude ?? null;
+
+    return {
+      latitude: lat,
+      longitude: lon,
+      altitude: alt,
+      timestamp: firstTimestamp,
+      rawExif: {
+        photoCount: photos.length,
+        validPhotoCount: 0,
+        low_gps_accuracy: true,
+        make,
+        model,
+        avgWidth: Math.round(
+          photos.reduce((sum, p) => sum + (p.exif.width || 0), 0) /
+            photos.length,
+        ),
+        avgHeight: Math.round(
+          photos.reduce((sum, p) => sum + (p.exif.height || 0), 0) /
+            photos.length,
+        ),
+      },
+    };
   }
 
   const avgLatitude = latSum / validCount;

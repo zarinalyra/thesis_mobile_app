@@ -8,6 +8,7 @@ interface TreeMarker {
   coordinate: { latitude: number; longitude: number };
   title: string;
   hasDisease: boolean;
+  isAnalyzed?: boolean;
 }
 
 interface MapComponentProps {
@@ -68,17 +69,31 @@ export default function MapComponent({ markers, onMapPress, onMarkerPress, farmN
       >
         {markers.map((marker) => {
           const markerScale = getMarkerScale();
-          const markerHasDisease =
-            marker.hasDisease === true ||
-            String(marker.hasDisease).toLowerCase() === 'true';
+          const analyzed = marker.isAnalyzed === true;
+          const hasDisease =
+            analyzed &&
+            (marker.hasDisease === true ||
+              String(marker.hasDisease).toLowerCase() === 'true');
+
+          const pinColor = !analyzed
+            ? '#9E9E9E'
+            : hasDisease
+              ? '#F44336'
+              : '#4CAF50';
+
+          const description = !analyzed
+            ? 'Not yet analyzed'
+            : hasDisease
+              ? 'Disease detected'
+              : 'Healthy tree';
 
           return (
             <Marker
               key={marker.id}
               coordinate={marker.coordinate}
               title={marker.title}
-              description={markerHasDisease ? 'Disease detected' : 'Healthy tree'}
-              pinColor={markerHasDisease ? '#FF9800' : '#4CAF50'}
+              description={description}
+              pinColor={pinColor}
               onPress={() => onMarkerPress?.(marker)}
               style={{ transform: [{ scale: markerScale }] }}
             />

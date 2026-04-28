@@ -38,6 +38,15 @@ export interface ChlorosisReading {
   valid: boolean;
 }
 
+export interface PerImageResult {
+  image_index: number;
+  final_label: string;
+  stage_1_result: string;
+  stage_2: Record<string, number> | null;
+  stage_3: Record<string, number> | null;
+  chlorosis_pct: number;
+}
+
 export interface AnalysisResult {
   tree_id: string;
   inspection_date: string;
@@ -50,6 +59,7 @@ export interface AnalysisResult {
   images_with_disease: number;
   images_healthy: number;
   chlorosis_readings: ChlorosisReading[];
+  per_image_results: PerImageResult[];
 }
 
 interface RawAnalysisResult {
@@ -68,6 +78,7 @@ interface RawAnalysisResult {
     chlorosis_percentage: number;
     valid: boolean;
   }>;
+  per_image_results: PerImageResult[];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -180,6 +191,9 @@ export async function analyzeLeafImages(
         const finalResult: AnalysisResult = {
           ...result,
           chlorosis_readings: mergedReadings,
+          per_image_results: Array.isArray(result.per_image_results)
+            ? result.per_image_results
+            : [],
         };
 
         console.log("Flask response (merged) received:", JSON.stringify(finalResult));
@@ -193,6 +207,9 @@ export async function analyzeLeafImages(
           chlorosis_percentage: Number(reading?.chlorosis_percentage) || 0,
           valid: Boolean(reading?.valid),
         })),
+        per_image_results: Array.isArray(result.per_image_results)
+          ? result.per_image_results
+          : [],
       };
 
       console.log("Flask response received:", JSON.stringify(normalized));
