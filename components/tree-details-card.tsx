@@ -118,7 +118,10 @@ function PerImageCard({
       : null;
 
   const showStage2 = item.stage_1_result === "Unhealthy" && item.stage_2 != null;
-  const showStage3 = s2Winner === "BSL" && item.stage_3 != null;
+  // Stage 3 is always run by /predict-debug for Unhealthy leaves regardless
+  // of Stage 2 winner, so show probabilities whenever the server returns them.
+  const showStage3 = item.stage_3 != null;
+  const stage3IsOfficial = s2Winner === "BSL";
 
   return (
     <View style={card.container}>
@@ -155,10 +158,13 @@ function PerImageCard({
         </>
       )}
 
-      {/* Stage 3 — probability bars, only if Stage 2 winner was BSL */}
+      {/* Stage 3 — always shown when server returns data.
+          Label notes when it's informational (Stage 2 winner ≠ BSL). */}
       {showStage3 && (
         <>
-          <ThemedText style={card.stageHeader}>Stage 3</ThemedText>
+          <ThemedText style={card.stageHeader}>
+            {stage3IsOfficial ? "Stage 3" : "Stage 3 (informational)"}
+          </ThemedText>
           {Object.entries(item.stage_3!).map(([label, prob]) => (
             <ProbabilityBar key={label} label={label} value={prob} />
           ))}
@@ -188,6 +194,29 @@ export default function TreeDetailsCard({
 
   const treeKey = tree.treeId || tree.id;
 
+  // ── Fetch images from the latest geotag (used when no analysis exists) ─
+  const fetchGeotagImages = useCallback(async () => {
+    try {
+      const { data: geotagData } = await supabase
+        .from("geotags")
+        .select("raw_exif")
+        .eq("tree_id", treeKey)
+        .order("captured_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!geotagData?.raw_exif) return;
+      let rawExif = geotagData.raw_exif;
+      if (typeof rawExif === "string") {
+        try { rawExif = JSON.parse(rawExif); } catch { return; }
+      }
+      const ids: number[] = rawExif.image_ids || rawExif.imageIds || [];
+      if (ids.length > 0) fetchInspectionImages(ids);
+    } catch {
+      // no geotag images available
+    }
+  }, [treeKey]);
+
   // ── Fetch latest analysis ───────────────────────────────────
   const fetchLatestAnalysis = useCallback(async () => {
     setLoadingAnalysis(true);
@@ -206,6 +235,8 @@ export default function TreeDetailsCard({
       if (error) {
         console.log("No analysis results for tree:", treeKey);
         setAnalysis(null);
+        // Show the latest captured images even without analysis
+        await fetchGeotagImages();
       } else {
         console.log("Latest analysis fetched:", JSON.stringify(data));
         setAnalysis(data as AnalysisData);
@@ -217,10 +248,11 @@ export default function TreeDetailsCard({
     } catch (err) {
       console.warn("Error fetching analysis:", err);
       setAnalysis(null);
+      await fetchGeotagImages();
     } finally {
       setLoadingAnalysis(false);
     }
-  }, [treeKey]);
+  }, [treeKey, fetchGeotagImages]);
 
   useEffect(() => {
     fetchLatestAnalysis();

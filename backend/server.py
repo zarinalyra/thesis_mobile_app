@@ -13,6 +13,7 @@ Endpoints:
 from flask import Flask, request, jsonify
 from datetime import date
 from chlorosis import compute_chlorosis_from_bytes
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.request
 import os
 import cv2
@@ -31,9 +32,9 @@ HF_SPACE_URL = os.getenv("HF_SPACE_URL", "").rstrip("/")
 HF_TIMEOUT_SECONDS = 300
 
 # Maximum dimension for any side of the image before processing.
-# 480px is sufficient for color-based chlorosis detection and keeps
-# GrabCut fast enough to finish within Render's 30s worker timeout.
-MAX_IMAGE_DIM = 480
+# 320px is sufficient for color-based chlorosis detection; smaller
+# images make GrabCut roughly 2x faster on Render's 0.5 CPU core.
+MAX_IMAGE_DIM = 320
 
 
 # =============================================================================
@@ -281,30 +282,52 @@ def analyze():
     if len(image_urls) < 3:
         return jsonify({"error": "At least 3 image URLs are required."}), 400
 
-    # --- Download, resize, and process each image ---
-    chlorosis_readings = []   # trimmed — for the response chlorosis_readings field
-    chlorosis_results  = []   # full (includes glare_percentage) — for aggregate_results
-    swat_results       = []
+    # --- Phase 1: Download, resize, and chlorosis (CPU-bound, sequential) ---
+    # GrabCut is CPU-intensive; running sequentially avoids contention on
+    # Render's single 0.5-core CPU.
+    image_bytes_list   = []
+    chlorosis_results  = []
 
     for i, url in enumerate(image_urls, start=1):
         try:
             with urllib.request.urlopen(url, timeout=15) as resp:
-                image_bytes = resp.read()
+                raw = resp.read()
         except Exception as e:
             return jsonify({"error": f"Failed to download image {i}: {str(e)}"}), 500
 
-        # Resize to prevent OOM on Render free tier
-        image_bytes = resize_image_bytes(image_bytes, MAX_IMAGE_DIM)
+        raw = resize_image_bytes(raw, MAX_IMAGE_DIM)
+        image_bytes_list.append(raw)
 
-        # Chlorosis computation
-        chlorosis_result = compute_chlorosis_from_bytes(image_bytes)
+        t0 = time.time()
+        chlorosis_result = compute_chlorosis_from_bytes(raw)
+        print(f"[chlorosis] image {i} done in {round(time.time()-t0,2)}s  "
+              f"pct={chlorosis_result.get('chlorosis_percentage',0):.1f}%", flush=True)
         chlorosis_results.append(chlorosis_result)
 
-        # SWAT-DCNN inference (heavy work runs on the HF Space, so we just
-        # forward the original Supabase URL — no need to upload bytes again).
-        swat_result = run_swat_dcnn(url)
-        swat_results.append(swat_result)
+    # --- Phase 2: SWAT-DCNN (I/O-bound, parallel) ---
+    # Each call blocks on the HF Space network round-trip; running them
+    # concurrently reduces total SWAT time from sum(t_i) to max(t_i).
+    swat_results = [None] * len(image_urls)
 
+    def _swat(idx_url):
+        idx, url = idx_url
+        t0 = time.time()
+        result = run_swat_dcnn(url)
+        print(f"[swat-par] image {idx+1} done in {round(time.time()-t0,2)}s", flush=True)
+        return idx, result
+
+    with ThreadPoolExecutor(max_workers=len(image_urls)) as pool:
+        futures = {pool.submit(_swat, (idx, url)): idx
+                   for idx, url in enumerate(image_urls)}
+        for future in as_completed(futures):
+            idx, result = future.result()
+            swat_results[idx] = result
+
+    # --- Build chlorosis_readings using combined results ---
+    chlorosis_readings = []
+    for i, (chlorosis_result, swat_result) in enumerate(
+        zip(chlorosis_results, swat_results), start=1
+    ):
         chlorosis_readings.append({
             "image_id":             i,
             "chlorosis_percentage": chlorosis_result["chlorosis_percentage"],

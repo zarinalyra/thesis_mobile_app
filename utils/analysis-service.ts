@@ -8,8 +8,11 @@
 
 export const FLASK_SERVER_URL = "https://thesis-mobile-app-v15u.onrender.com";
 
-// How long to wait for Flask before giving up (120 seconds).
-const TIMEOUT_MS = 120000;
+// How long to wait for Flask before giving up.
+// Must exceed gunicorn --timeout (360s) + HF cold-start (up to 60s).
+// Set to 350s so the mobile side gives up slightly before gunicorn does,
+// which produces a clean error rather than a connection reset.
+const TIMEOUT_MS = 350000;
 
 // How many times to attempt before failing.
 const MAX_RETRIES = 2;
@@ -22,7 +25,7 @@ const MAX_RETRIES = 2;
 // ─────────────────────────────────────────────────────────────
 export async function warmUpFlask(): Promise<void> {
   try {
-    await fetchWithTimeout(FLASK_SERVER_URL, { method: "GET" }, 15000);
+    await fetchWithTimeout(FLASK_SERVER_URL, { method: "GET" }, 60000);
     console.log("Flask warm-up OK");
   } catch {
     console.warn("Flask warm-up ping failed (server may still wake in time)");

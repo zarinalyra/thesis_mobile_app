@@ -23,7 +23,10 @@ import {
 } from "react-native";
 
 const { width } = Dimensions.get("window");
-const CARD_SIZE = (width - 48) / 2;
+const CARD_WIDTH = (width - 48) / 2;
+// Match the ROI aspect ratio (65% wide x 85% of available height)
+// ROI_WIDTH/ROI_HEIGHT ≈ 0.65 / (0.85 * available) — use portrait ratio
+const CARD_HEIGHT = CARD_WIDTH * 1.6;
 
 // ─────────────────────────────────────────────────────────────
 // GPS HELPERS
@@ -223,6 +226,17 @@ export default function PhotoReviewScreen() {
         } else {
           console.log("Geotag updated for tree:", resolvedTreeId);
         }
+
+        // Clear previous analysis so the tree card shows new images
+        // and re-enables the Analyze button for the new photos.
+        const { error: clearError } = await supabase
+          .from("analysis_results")
+          .delete()
+          .eq("tree_id", resolvedTreeId);
+
+        if (clearError) {
+          console.warn("Could not clear old analysis:", clearError.message);
+        }
       } else {
         // ── Add Tree flow ───────────────────────────────────────
         // uploadPhotosToSupabase handles images + geotag INSERT.
@@ -309,7 +323,6 @@ export default function PhotoReviewScreen() {
                 <Image
                   source={{ uri: photo.uri }}
                   style={styles.photo}
-                  resizeMode="cover"
                 />
                 <Pressable
                   style={styles.closeButton}
@@ -348,7 +361,6 @@ export default function PhotoReviewScreen() {
         <Pressable
           style={styles.modalBackground}
           onPress={() => setPreviewImage(null)}
-          activeOpacity={1}
         >
           <View style={styles.modalContent}>
             {previewImage && (
@@ -396,14 +408,14 @@ const styles = StyleSheet.create({
   },
   grid: { padding: 16 },
   photoCard: {
-    width: CARD_SIZE,
-    height: CARD_SIZE,
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
     borderRadius: 10,
     overflow: "hidden",
     margin: 4,
     backgroundColor: "#ddd",
   },
-  photo: { width: "100%", height: "100%" },
+  photo: { width: "100%", height: "100%", resizeMode: "contain" },
   closeButton: {
     position: "absolute",
     top: 6,
@@ -417,8 +429,8 @@ const styles = StyleSheet.create({
   },
   closeText: { fontSize: 14, fontWeight: "700", color: "#000" },
   addCard: {
-    width: CARD_SIZE,
-    height: CARD_SIZE,
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
     borderRadius: 10,
     margin: 4,
     backgroundColor: "#C8D7C5",

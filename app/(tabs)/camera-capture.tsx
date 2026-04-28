@@ -7,7 +7,7 @@ import * as Haptics from "expo-haptics";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as Location from "expo-location";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -68,23 +68,40 @@ function CropPreviewScreen({
   onConfirm: (croppedUri: string) => void;
   onRetake: () => void;
 }) {
-  // ── Layout math ─────────────────────────────────────────────
-  const PREVIEW_W = SCREEN_WIDTH;
-  const PREVIEW_H = SCREEN_HEIGHT - PREVIEW_HEADER_H - PREVIEW_BOTTOM_H;
-
-  const containScale = Math.min(PREVIEW_W / imgW, PREVIEW_H / imgH);
-  const displayedW = imgW * containScale;
-  const displayedH = imgH * containScale;
-  const imgOffsetX = (PREVIEW_W - displayedW) / 2;
-  const imgOffsetY = (PREVIEW_H - displayedH) / 2;
-
   const MIN_SIZE = 40;
   const clamp = (v: number, lo: number, hi: number) =>
     Math.max(lo, Math.min(hi, v));
 
+  // ── Measured layout — updated via onLayout on the image container ──────
+  // Using a ref (not state) so PanResponder closures always read the latest
+  // values without needing to be recreated when the container size changes.
+  const layoutRef = useRef({
+    containScale: 1,
+    displayedW: 0,
+    displayedH: 0,
+    imgOffsetX: 0,
+    imgOffsetY: 0,
+  });
+
+  const handleContainerLayout = useCallback(
+    (e: any) => {
+      const { width: cW, height: cH } = e.nativeEvent.layout;
+      if (cW === 0 || cH === 0) return;
+      const scale = Math.min(cW / imgW, cH / imgH);
+      const dW = imgW * scale;
+      const dH = imgH * scale;
+      layoutRef.current = {
+        containScale: scale,
+        displayedW: dW,
+        displayedH: dH,
+        imgOffsetX: (cW - dW) / 2,
+        imgOffsetY: (cH - dH) / 2,
+      };
+    },
+    [imgW, imgH],
+  );
+
   // ── Phase — drawing → adjusting ─────────────────────────────
-  // phaseRef lets PanResponder closures (created once) read the
-  // current phase without stale closure issues.
   const phaseRef = useRef<"drawing" | "adjusting">("drawing");
   const [phase, setPhaseSt] = useState<"drawing" | "adjusting">("drawing");
   const setPhase = (p: "drawing" | "adjusting") => {
@@ -109,14 +126,15 @@ function CropPreviewScreen({
     setCropBoxState(box);
   };
 
-  // ── Drawing PanResponder (image container) ───────────────────
-  // Captures the first touch and tracks the drag to build a
-  // live rectangle. On release, commits to adjusting phase.
+  // ── Drawing PanResponder ─────────────────────────────────────
+  // Reads layoutRef.current at call time so it always uses the
+  // measured container size rather than stale closure values.
   const drawPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => phaseRef.current === "drawing",
       onMoveShouldSetPanResponder: () => phaseRef.current === "drawing",
       onPanResponderGrant: (evt) => {
+        const { imgOffsetX, imgOffsetY, displayedW, displayedH } = layoutRef.current;
         const { locationX, locationY } = evt.nativeEvent;
         const ax = clamp(locationX, imgOffsetX, imgOffsetX + displayedW);
         const ay = clamp(locationY, imgOffsetY, imgOffsetY + displayedH);
@@ -124,6 +142,7 @@ function CropPreviewScreen({
         setLiveBox({ left: ax, top: ay, right: ax, bottom: ay });
       },
       onPanResponderMove: (_, g) => {
+        const { imgOffsetX, imgOffsetY, displayedW, displayedH } = layoutRef.current;
         const a = anchorRef.current;
         if (!a) return;
         const curX = clamp(a.x + g.dx, imgOffsetX, imgOffsetX + displayedW);
@@ -143,7 +162,6 @@ function CropPreviewScreen({
             prev.right - prev.left > MIN_SIZE &&
             prev.bottom - prev.top > MIN_SIZE
           ) {
-            // Commit drawn box and switch to adjusting
             cropBoxRef.current = prev;
             setCropBoxState(prev);
             phaseRef.current = "adjusting";
@@ -155,7 +173,7 @@ function CropPreviewScreen({
     }),
   ).current;
 
-  // ── Corner PanResponders (adjusting phase only) ──────────────
+  // ── Corner PanResponders ─────────────────────────────────────
   const makePan = (corner: "tl" | "tr" | "bl" | "br") =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -164,6 +182,7 @@ function CropPreviewScreen({
         snapshotRef.current = { ...cropBoxRef.current };
       },
       onPanResponderMove: (_, g) => {
+        const { imgOffsetX, imgOffsetY, displayedW, displayedH } = layoutRef.current;
         const s = snapshotRef.current;
         if (!s) return;
         const maxR = imgOffsetX + displayedW;
@@ -195,6 +214,7 @@ function CropPreviewScreen({
   const handleConfirm = async () => {
     setConfirming(true);
     try {
+      const { containScale, imgOffsetX, imgOffsetY } = layoutRef.current;
       const box = cropBoxRef.current;
       const fx = Math.max(0, Math.round((box.left - imgOffsetX) / containScale));
       const fy = Math.max(0, Math.round((box.top - imgOffsetY) / containScale));
@@ -224,7 +244,6 @@ function CropPreviewScreen({
     }
   };
 
-  // The box to render: live during drawing, cropBox during adjusting
   const activeBox = phase === "drawing" ? liveBox : cropBox;
   const boxW = activeBox ? activeBox.right - activeBox.left : 0;
   const boxH = activeBox ? activeBox.bottom - activeBox.top : 0;
@@ -244,14 +263,17 @@ function CropPreviewScreen({
         </ThemedText>
       </View>
 
-      {/* Image + drawing surface */}
+      {/* Image + drawing surface — flex:1 fills all space between header
+          and bottom bar; onLayout captures the real pixel dimensions so
+          containScale and imgOffset are always accurate. */}
       <View
-        style={{ width: PREVIEW_W, height: PREVIEW_H, backgroundColor: "#000" }}
+        style={prev.imageContainer}
+        onLayout={handleContainerLayout}
         {...drawPan.panHandlers}
       >
         <Image
           source={{ uri: rawUri }}
-          style={{ width: PREVIEW_W, height: PREVIEW_H }}
+          style={prev.imageContainerFill}
           resizeMode="contain"
         />
 
@@ -674,6 +696,11 @@ const prev = StyleSheet.create({
   },
   progressText: { color: "#fff", fontSize: 18, fontWeight: "700" },
   hintText: { color: "rgba(255,255,255,0.55)", fontSize: 12 },
+  // flex:1 so the image container fills all space between header and bottom bar.
+  // onLayout fires with the real pixel dimensions, which are stored in layoutRef
+  // and used for containScale / imgOffset calculations.
+  imageContainer: { flex: 1, backgroundColor: "#000" },
+  imageContainerFill: { width: "100%", height: "100%" },
   dark: { position: "absolute", backgroundColor: "rgba(0,0,0,0.55)" },
   cropBorder: {
     position: "absolute",
@@ -685,8 +712,9 @@ const prev = StyleSheet.create({
   handleTR: { borderTopWidth: 4, borderRightWidth: 4, borderColor: "#4ADE80" },
   handleBL: { borderBottomWidth: 4, borderLeftWidth: 4, borderColor: "#4ADE80" },
   handleBR: { borderBottomWidth: 4, borderRightWidth: 4, borderColor: "#4ADE80" },
+  // Fixed height so the image container above can flex freely.
   bottomBar: {
-    flex: 1,
+    height: PREVIEW_BOTTOM_H,
     backgroundColor: "#111",
     paddingHorizontal: 16,
     paddingTop: 12,
