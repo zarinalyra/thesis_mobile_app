@@ -11,6 +11,7 @@ import {
   Alert,
   Animated,
   Image,
+  Modal,
   PanResponder,
   Pressable,
   ScrollView,
@@ -191,6 +192,7 @@ export default function TreeDetailsCard({
   const [loadingImages, setLoadingImages] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const treeKey = tree.treeId || tree.id;
 
@@ -617,7 +619,9 @@ export default function TreeDetailsCard({
           <View style={styles.imageGrid}>
             {inspectionImages.length > 0 ? (
               inspectionImages.map((url, index) => (
-                <Image key={index} source={{ uri: url }} style={styles.image} />
+                <Pressable key={index} onPress={() => setPreviewUrl(url)}>
+                  <Image source={{ uri: url }} style={styles.image} />
+                </Pressable>
               ))
             ) : (
               <View style={styles.emptyImageCard}>
@@ -631,6 +635,35 @@ export default function TreeDetailsCard({
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Full-screen image preview modal */}
+      <Modal
+        visible={previewUrl !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPreviewUrl(null)}
+      >
+        <Pressable
+          style={styles.modalBackground}
+          onPress={() => setPreviewUrl(null)}
+        >
+          <View style={styles.modalContent}>
+            {previewUrl && (
+              <Image
+                source={{ uri: previewUrl }}
+                style={styles.modalImage}
+                resizeMode="contain"
+              />
+            )}
+            <Pressable
+              style={styles.modalClose}
+              onPress={() => setPreviewUrl(null)}
+            >
+              <ThemedText style={styles.modalCloseText}>✕</ThemedText>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </Animated.View>
   );
 }
@@ -734,6 +767,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   emptyImageText: { color: "#666", fontSize: 14 },
+  modalBackground: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: { width: "100%", height: "80%", position: "relative" },
+  modalImage: { width: "100%", height: "100%" },
+  modalClose: {
+    position: "absolute",
+    top: 12,
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalCloseText: { fontSize: 18, fontWeight: "700", color: "#000" },
 });
 
 // ─────────────────────────────────────────────────────────────
