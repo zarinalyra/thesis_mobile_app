@@ -13,16 +13,36 @@ const FARM_CENTER = { lat: 14.1976, lng: 120.884357 };
 const MAP_ZOOM = 23;
 const containerStyle = { width: "100%", height: "100%" };
 
-function getMarkerColor(hasDisease) {
-  return hasDisease ? "FFA500" : "00AA00";
+function getMarkerColor(marker) {
+  if (!marker?.isAnalyzed) {
+    return "9E9E9E";
+  }
+
+  return marker.hasDisease ? "FF6600" : "4CAF50";
+}
+
+function darkenHexColor(hexColor, amount = 0.2) {
+  const normalized = hexColor.replace(/^#/, "");
+  if (!/^[0-9A-Fa-f]{6}$/.test(normalized)) {
+    return hexColor;
+  }
+
+  const num = Number.parseInt(normalized, 16);
+  const r = Math.max(0, Math.min(255, Math.floor(((num >> 16) & 0xff) * (1 - amount))));
+  const g = Math.max(0, Math.min(255, Math.floor(((num >> 8) & 0xff) * (1 - amount))));
+  const b = Math.max(0, Math.min(255, Math.floor((num & 0xff) * (1 - amount))));
+
+  return [r, g, b]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function getMarkerIconDataUrl(hexColor) {
+  const innerColor = darkenHexColor(hexColor, 0.25);
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="38" height="54" viewBox="0 0 38 54">
       <path d="M19 2C11.27 2 5 8.27 5 16c0 11.13 14 34 14 34s14-22.87 14-34C33 8.27 26.73 2 19 2z" fill="#${hexColor}" stroke="#ffffff" stroke-width="1"/>
-      <circle cx="19" cy="16" r="7.2" fill="#3ad95c"/>
-      <circle cx="19" cy="16" r="3.8" fill="#1f8f33"/>
+      <circle cx="19" cy="16" r="7.5" fill="#${innerColor}" />
     </svg>
   `;
 
@@ -293,10 +313,16 @@ export default function MapPage() {
 
         const key = String(resolvedTreeId || tree.id);
         const current = groupedByTree.get(key) || [];
+        const hasDiseaseRaw =
+          rawExif.has_disease !== undefined
+            ? rawExif.has_disease
+            : rawExif.hasDisease;
+
         current.push({
           rowId: tree.id,
           coordinate,
-          hasDisease: Boolean(rawExif.has_disease || rawExif.hasDisease),
+          hasDisease: Boolean(hasDiseaseRaw),
+          isAnalyzed: hasDiseaseRaw !== undefined,
           treeId: String(resolvedTreeId),
           treeType: String(resolvedTreeType),
           datePlanted: String(resolvedDatePlanted),
@@ -419,10 +445,19 @@ export default function MapPage() {
                 .data.publicUrl,
           );
 
+        const latestHasDisease =
+          Boolean(latestAnalysis) &&
+          ((Array.isArray(latestAnalysis.diseases_detected) &&
+            latestAnalysis.diseases_detected.length > 0) ||
+            (Array.isArray(latestAnalysis.pests_detected) &&
+              latestAnalysis.pests_detected.length > 0));
+
         return {
           ...marker,
           latestAnalysis,
           latestImages,
+          hasDisease: latestAnalysis ? latestHasDisease : marker.hasDisease,
+          isAnalyzed: Boolean(latestAnalysis) || marker.isAnalyzed,
         };
       });
 
@@ -558,7 +593,7 @@ export default function MapPage() {
               options={mapOptions}
             >
               {markers.map((marker) => {
-                const markerColor = getMarkerColor(marker.hasDisease);
+                const markerColor = getMarkerColor(marker);
                 const markerSize = getMarkerSizeByZoom(currentZoom);
                 const icon = {
                   url: getMarkerIconDataUrl(markerColor),

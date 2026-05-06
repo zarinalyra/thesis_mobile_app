@@ -1,7 +1,7 @@
-import React, { useRef, useEffect, useState } from 'react';
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
-import { View, StyleSheet } from 'react-native';
-import { ThemedText } from './themed-text';
+import React, { useEffect, useRef, useState } from "react";
+import { StyleSheet, View } from "react-native";
+import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
+import { ThemedText } from "./themed-text";
 
 interface TreeMarker {
   id: string;
@@ -25,7 +25,12 @@ const FARM_REGION = {
   longitudeDelta: 0.0006,
 };
 
-export default function MapComponent({ markers, onMapPress, onMarkerPress, farmName }: MapComponentProps) {
+export default function MapComponent({
+  markers,
+  onMapPress,
+  onMarkerPress,
+  farmName,
+}: MapComponentProps) {
   const mapRef = useRef<MapView>(null);
   const [region, setRegion] = useState<Region>(FARM_REGION);
 
@@ -73,19 +78,19 @@ export default function MapComponent({ markers, onMapPress, onMarkerPress, farmN
           const hasDisease =
             analyzed &&
             (marker.hasDisease === true ||
-              String(marker.hasDisease).toLowerCase() === 'true');
+              String(marker.hasDisease).toLowerCase() === "true");
 
           const pinColor = !analyzed
-            ? '#9E9E9E'
+            ? "#9E9E9E"
             : hasDisease
-              ? '#F44336'
-              : '#4CAF50';
+              ? "#FF6600"
+              : "#4CAF50";
 
           const description = !analyzed
-            ? 'Not yet analyzed'
+            ? "Not yet analyzed"
             : hasDisease
-              ? 'Disease detected'
-              : 'Healthy tree';
+              ? "Disease detected"
+              : "Healthy tree";
 
           return (
             <Marker
@@ -103,7 +108,9 @@ export default function MapComponent({ markers, onMapPress, onMarkerPress, farmN
       {markers.length === 0 && (
         <View style={styles.emptyState}>
           <ThemedText style={styles.emptyText}>No trees added yet</ThemedText>
-          <ThemedText style={styles.emptySubtext}>Tap Add Tree to start</ThemedText>
+          <ThemedText style={styles.emptySubtext}>
+            Tap Add Tree to start
+          </ThemedText>
         </View>
       )}
     </View>
@@ -118,24 +125,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   emptyState: {
-    position: 'absolute',
-    top: '40%',
+    position: "absolute",
+    top: "40%",
     left: 0,
     right: 0,
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
     padding: 20,
     marginHorizontal: 40,
     borderRadius: 10,
   },
   emptyText: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#000',
+    fontWeight: "600",
+    color: "#000",
     marginBottom: 8,
   },
   emptySubtext: {
     fontSize: 14,
-    color: '#666',
+    color: "#666",
   },
 });
