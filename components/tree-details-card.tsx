@@ -119,10 +119,7 @@ function PerImageCard({
       : null;
 
   const showStage2 = item.stage_1_result === "Unhealthy" && item.stage_2 != null;
-  // Stage 3 is always run by /predict-debug for Unhealthy leaves regardless
-  // of Stage 2 winner, so show probabilities whenever the server returns them.
-  const showStage3 = item.stage_3 != null;
-  const stage3IsOfficial = s2Winner === "BSL";
+  const showStage3 = item.stage_3 != null && s2Winner === "BSL";
 
   return (
     <View style={card.container}>
@@ -159,13 +156,10 @@ function PerImageCard({
         </>
       )}
 
-      {/* Stage 3 — always shown when server returns data.
-          Label notes when it's informational (Stage 2 winner ≠ BSL). */}
+      {/* Stage 3 — only shown when Stage 2 winner is BSL */}
       {showStage3 && (
         <>
-          <ThemedText style={card.stageHeader}>
-            {stage3IsOfficial ? "Stage 3" : "Stage 3 (informational)"}
-          </ThemedText>
+          <ThemedText style={card.stageHeader}>Stage 3</ThemedText>
           {Object.entries(item.stage_3!).map(([label, prob]) => (
             <ProbabilityBar key={label} label={label} value={prob} />
           ))}
