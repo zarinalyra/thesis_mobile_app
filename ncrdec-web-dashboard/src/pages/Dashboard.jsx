@@ -207,7 +207,7 @@ export default function Dashboard() {
       // Build Disease/Pest breakdown
       const diseaseCountMap = new Map();
       const pestCountMap = new Map();
-      latestAnalysisByTree.forEach((analysis) => {
+      analysisRows.forEach((analysis) => {
         if (Array.isArray(analysis.diseases_detected)) {
           analysis.diseases_detected.forEach((disease) => {
             if (disease && disease.trim()) {
