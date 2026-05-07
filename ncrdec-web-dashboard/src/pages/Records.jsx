@@ -39,6 +39,125 @@ function getChlorosisLines(analysis) {
   });
 }
 
+function formatProbability(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return "0%";
+  }
+
+  return `${Math.round(numericValue * 100)}%`;
+}
+
+function getStageWinner(probabilities) {
+  if (!probabilities || typeof probabilities !== "object") {
+    return null;
+  }
+
+  const entries = Object.entries(probabilities);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return entries.reduce((bestEntry, currentEntry) =>
+    currentEntry[1] > bestEntry[1] ? currentEntry : bestEntry,
+  )[0];
+}
+
+function MonitoringResultCard({ item, thumbnailUrl, onPreviewImage }) {
+  const stage2Winner = getStageWinner(item.stage_2);
+  const showStage2 = item.stage_1_result === "Unhealthy" && item.stage_2;
+  const showStage3 = item.stage_3 && stage2Winner === "BSL";
+
+  return (
+    <div className="record-inspection-card">
+      <div className="record-inspection-card-header">
+        <div className="record-inspection-card-title">
+          Image {item.image_index}
+        </div>
+        {thumbnailUrl ? (
+          <button
+            type="button"
+            className="record-inspection-thumbnail-button"
+            onClick={() => onPreviewImage?.(thumbnailUrl, item.image_index)}
+            aria-label={`Open inspection image ${item.image_index}`}
+          >
+            <img
+              src={thumbnailUrl}
+              alt={`Inspection image ${item.image_index}`}
+              className="record-inspection-thumbnail"
+            />
+          </button>
+        ) : (
+          <div className="record-inspection-thumbnail record-inspection-thumbnail-empty">
+            No image
+          </div>
+        )}
+      </div>
+
+      <div className="record-inspection-result">
+        Final result: <strong>{item.final_label || "-"}</strong>
+      </div>
+      <div className="record-inspection-chlorosis">
+        Chlorosis:{" "}
+        {Number.isFinite(Number(item.chlorosis_pct))
+          ? `${Number(item.chlorosis_pct).toFixed(1)}%`
+          : "0.0%"}
+      </div>
+
+      <div className="record-inspection-section">
+        <div className="record-inspection-section-title">Stage 1</div>
+        <div className="record-inspection-stage-value">
+          {item.stage_1_result || "-"}
+        </div>
+      </div>
+
+      {showStage2 && (
+        <div className="record-inspection-section">
+          <div className="record-inspection-section-title">Stage 2</div>
+          <div className="record-inspection-bars">
+            {Object.entries(item.stage_2).map(([label, probability]) => (
+              <div key={label} className="record-inspection-bar-row">
+                <span className="record-inspection-bar-label">{label}</span>
+                <div className="record-inspection-bar-track">
+                  <div
+                    className="record-inspection-bar-fill"
+                    style={{ width: formatProbability(probability) }}
+                  />
+                </div>
+                <span className="record-inspection-bar-value">
+                  {formatProbability(probability)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showStage3 && (
+        <div className="record-inspection-section">
+          <div className="record-inspection-section-title">Stage 3</div>
+          <div className="record-inspection-bars">
+            {Object.entries(item.stage_3).map(([label, probability]) => (
+              <div key={label} className="record-inspection-bar-row">
+                <span className="record-inspection-bar-label">{label}</span>
+                <div className="record-inspection-bar-track">
+                  <div
+                    className="record-inspection-bar-fill"
+                    style={{ width: formatProbability(probability) }}
+                  />
+                </div>
+                <span className="record-inspection-bar-value">
+                  {formatProbability(probability)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Records() {
   const [records, setRecords] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -182,54 +301,56 @@ export default function Records() {
             />
           </div>
 
-          <table className="records-table">
-            <thead>
-              <tr>
-                <th>Tree ID</th>
-                <th>Farm ID</th>
-                <th>Tree Type</th>
-                <th>Date Planted</th>
-                <th>Tree Age</th>
-                <th>GPS Coordinates</th>
-                <th>Monitoring History</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRecords.length > 0 ? (
-                filteredRecords.map((record) => (
-                  <tr
-                    key={record.rowId}
-                    onClick={() => {
-                      setSelectedTree(record);
-                      setSelectedMonitoring(null);
-                    }}
-                    className={
-                      selectedTree?.rowId === record.rowId ? "active" : ""
-                    }
-                  >
-                    <td>{record.treeId || "-"}</td>
-                    <td>{record.farmId || "-"}</td>
-                    <td>{record.treeType || "-"}</td>
-                    <td>{record.datePlanted || "-"}</td>
-                    <td>{getTreeAge(record.datePlanted)}</td>
-                    <td>
-                      {record.coordinate.latitude.toFixed(4)},{" "}
-                      {record.coordinate.longitude.toFixed(4)}
-                    </td>
-                    <td>
-                      <button className="view-btn">View</button>
+          <div className="records-table-wrap">
+            <table className="records-table">
+              <thead>
+                <tr>
+                  <th>Tree ID</th>
+                  <th>Farm ID</th>
+                  <th>Tree Type</th>
+                  <th>Date Planted</th>
+                  <th>Tree Age</th>
+                  <th>GPS Coordinates</th>
+                  <th>Monitoring History</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRecords.length > 0 ? (
+                  filteredRecords.map((record) => (
+                    <tr
+                      key={record.rowId}
+                      onClick={() => {
+                        setSelectedTree(record);
+                        setSelectedMonitoring(null);
+                      }}
+                      className={
+                        selectedTree?.rowId === record.rowId ? "active" : ""
+                      }
+                    >
+                      <td>{record.treeId || "-"}</td>
+                      <td>{record.farmId || "-"}</td>
+                      <td>{record.treeType || "-"}</td>
+                      <td>{record.datePlanted || "-"}</td>
+                      <td>{getTreeAge(record.datePlanted)}</td>
+                      <td>
+                        {record.coordinate.latitude.toFixed(4)},{" "}
+                        {record.coordinate.longitude.toFixed(4)}
+                      </td>
+                      <td>
+                        <button className="view-btn">View</button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="7" className="no-data">
+                      No records found
                     </td>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="7" className="no-data">
-                    No records found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {selectedTree && (
@@ -264,11 +385,7 @@ export default function Records() {
                                 className="history-date-btn"
                                 onClick={() => setSelectedMonitoring(item)}
                               >
-                                {formatDate(
-                                  item.analysis?.inspection_date ||
-                                    item.analysis?.created_at ||
-                                    item.capturedAt,
-                                )}
+                                {formatDate(item.capturedAt)}
                               </button>
                             </td>
                           </tr>
@@ -324,61 +441,108 @@ export default function Records() {
                 </div>
 
                 <div className="details-section">
-                  <h4>Inspection Result</h4>
-                  <div className="detail-row">
-                    <span className="label">Disease/s Detected:</span>
-                    <span className="value">
-                      {renderDetectedList(
-                        selectedMonitoring.analysis?.diseases_detected,
+                  <h4>
+                    Latest Inspection:{" "}
+                    {formatDate(selectedMonitoring.capturedAt)}
+                  </h4>
+                  {!selectedMonitoring.analysis && (
+                    <div className="detail-row detail-row-not-analyzed">
+                      <span className="label">Status:</span>
+                      <span className="value">Not Yet Analyzed</span>
+                    </div>
+                  )}
+                  {selectedMonitoring.analysis?.per_image_results &&
+                  selectedMonitoring.analysis.per_image_results.length > 0 ? (
+                    <div className="record-analysis-cards">
+                      {selectedMonitoring.analysis.per_image_results.map(
+                        (item, idx) => {
+                          const requestedIndex = Number(item.image_index) - 1;
+                          let thumb = undefined;
+                          if (Array.isArray(selectedMonitoring.imageUrls)) {
+                            if (
+                              Number.isFinite(requestedIndex) &&
+                              selectedMonitoring.imageUrls[requestedIndex]
+                            ) {
+                              thumb =
+                                selectedMonitoring.imageUrls[requestedIndex];
+                            } else if (selectedMonitoring.imageUrls[idx]) {
+                              thumb = selectedMonitoring.imageUrls[idx];
+                            }
+                          }
+
+                          return (
+                            <MonitoringResultCard
+                              key={`${selectedMonitoring.id}-img-${item.image_index}`}
+                              item={item}
+                              thumbnailUrl={thumb}
+                              onPreviewImage={(src, imageIndex) =>
+                                setSelectedImage({
+                                  src,
+                                  alt: `Inspection image ${imageIndex}`,
+                                })
+                              }
+                            />
+                          );
+                        },
                       )}
-                    </span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="label">Pest/s Detected:</span>
-                    <span className="value">
-                      {renderDetectedList(
-                        selectedMonitoring.analysis?.pests_detected,
-                      )}
-                    </span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="label">Leaf Chlorosis:</span>
-                    <span className="value value-multiline">
-                      {getChlorosisLines(selectedMonitoring.analysis).length > 0
-                        ? getChlorosisLines(selectedMonitoring.analysis).map(
-                            (line) => (
-                              <span
-                                key={`detail-${selectedMonitoring.id}-${line}`}
-                                className="chlorosis-line"
-                              >
-                                {line}
-                              </span>
-                            ),
-                          )
-                        : "None"}
-                    </span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="label">Date of Last Inspection:</span>
-                    <span className="value">
-                      {formatDate(
-                        selectedMonitoring.analysis?.inspection_date ||
-                          selectedMonitoring.analysis?.created_at ||
-                          selectedMonitoring.capturedAt,
-                      )}
-                    </span>
-                  </div>
+                    </div>
+                  ) : selectedMonitoring.analysis ? (
+                    <>
+                      <div className="detail-row">
+                        <span className="label">Disease/s Detected:</span>
+                        <span className="value">
+                          {renderDetectedList(
+                            selectedMonitoring.analysis?.diseases_detected,
+                          )}
+                        </span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="label">Pest/s Detected:</span>
+                        <span className="value">
+                          {renderDetectedList(
+                            selectedMonitoring.analysis?.pests_detected,
+                          )}
+                        </span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="label">Leaf Chlorosis:</span>
+                        <span className="value value-multiline">
+                          {getChlorosisLines(selectedMonitoring.analysis)
+                            .length > 0
+                            ? getChlorosisLines(
+                                selectedMonitoring.analysis,
+                              ).map((line) => (
+                                <span
+                                  key={`detail-${selectedMonitoring.id}-${line}`}
+                                  className="chlorosis-line"
+                                >
+                                  {line}
+                                </span>
+                              ))
+                            : "None"}
+                        </span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="label">Date of Last Inspection:</span>
+                        <span className="value">
+                          {formatDate(selectedMonitoring.capturedAt)}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <></>
+                  )}
                 </div>
 
                 <div className="details-section">
-                  <h4>Uploaded Images</h4>
+                  <h4>Latest Images</h4>
                   {selectedMonitoring.imageUrls?.length ? (
-                    <div className="record-image-grid">
+                    <div className="record-image-grid latest-record-image-grid">
                       {selectedMonitoring.imageUrls.map((imageUrl, index) => (
                         <button
                           key={`${selectedMonitoring.id}-image-${index}`}
                           type="button"
-                          className="record-tree-image-button"
+                          className="record-tree-image-button latest-record-image-button"
                           onClick={() =>
                             setSelectedImage({
                               src: imageUrl,
@@ -389,14 +553,14 @@ export default function Records() {
                           <img
                             src={imageUrl}
                             alt={`Tree ${selectedTree.treeId} upload ${index + 1}`}
-                            className="record-tree-image"
+                            className="record-tree-image latest-record-image"
                           />
                         </button>
                       ))}
                     </div>
                   ) : (
                     <div className="history-empty">
-                      No uploaded images for this monitoring record.
+                      No latest images for this monitoring record.
                     </div>
                   )}
                 </div>

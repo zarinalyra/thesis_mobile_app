@@ -1,11 +1,5 @@
 import { GoogleMap, MarkerF, useJsApiLoader } from "@react-google-maps/api";
-import {
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import "./Map.css";
 
@@ -28,13 +22,17 @@ function darkenHexColor(hexColor, amount = 0.2) {
   }
 
   const num = Number.parseInt(normalized, 16);
-  const r = Math.max(0, Math.min(255, Math.floor(((num >> 16) & 0xff) * (1 - amount))));
-  const g = Math.max(0, Math.min(255, Math.floor(((num >> 8) & 0xff) * (1 - amount))));
+  const r = Math.max(
+    0,
+    Math.min(255, Math.floor(((num >> 16) & 0xff) * (1 - amount))),
+  );
+  const g = Math.max(
+    0,
+    Math.min(255, Math.floor(((num >> 8) & 0xff) * (1 - amount))),
+  );
   const b = Math.max(0, Math.min(255, Math.floor((num & 0xff) * (1 - amount))));
 
-  return [r, g, b]
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
+  return [r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function getMarkerIconDataUrl(hexColor) {
@@ -95,34 +93,121 @@ function formatDate(value) {
   return date.toLocaleDateString();
 }
 
-function getChlorosisLines(analysis) {
-  const readings = analysis?.chlorosis_readings;
-  if (!Array.isArray(readings) || readings.length === 0) {
-    return [];
+function formatProbability(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return "0%";
   }
 
-  return readings.map((reading, index) => {
-    const imageNumber = Number(reading?.image_id);
-    const label =
-      Number.isFinite(imageNumber) && imageNumber > 0 ? imageNumber : index + 1;
-    const value = Number(reading?.chlorosis_percentage);
-    const percentage = Number.isFinite(value) ? `${value.toFixed(2)}%` : "N/A";
-    return `Image ${label}: ${percentage}`;
-  });
+  return `${Math.round(numericValue * 100)}%`;
 }
 
-function getOrdinalLabel(index) {
-  const number = index + 1;
-  const mod100 = number % 100;
-  if (mod100 >= 11 && mod100 <= 13) {
-    return `${number}th`;
+function getStageWinner(probabilities) {
+  if (!probabilities || typeof probabilities !== "object") {
+    return null;
   }
 
-  const mod10 = number % 10;
-  if (mod10 === 1) return `${number}st`;
-  if (mod10 === 2) return `${number}nd`;
-  if (mod10 === 3) return `${number}rd`;
-  return `${number}th`;
+  const entries = Object.entries(probabilities);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return entries.reduce((bestEntry, currentEntry) =>
+    currentEntry[1] > bestEntry[1] ? currentEntry : bestEntry,
+  )[0];
+}
+
+function InspectionResultCard({ item, thumbnailUrl, onPreviewImage }) {
+  const stage2Winner = getStageWinner(item.stage_2);
+  const showStage2 = item.stage_1_result === "Unhealthy" && item.stage_2;
+  const showStage3 = item.stage_3 && stage2Winner === "BSL";
+
+  return (
+    <div className="inspection-card">
+      <div className="inspection-card-header">
+        <div className="inspection-card-title">Image {item.image_index}</div>
+        {thumbnailUrl ? (
+          <button
+            type="button"
+            className="inspection-card-thumbnail-button"
+            onClick={() => onPreviewImage?.(thumbnailUrl, item.image_index)}
+            aria-label={`Open inspection image ${item.image_index}`}
+          >
+            <img
+              src={thumbnailUrl}
+              alt={`Inspection image ${item.image_index}`}
+              className="inspection-card-thumbnail"
+            />
+          </button>
+        ) : (
+          <div className="inspection-card-thumbnail inspection-card-thumbnail-empty">
+            No image
+          </div>
+        )}
+      </div>
+
+      <div className="inspection-card-result">
+        Final result: <strong>{item.final_label || "-"}</strong>
+      </div>
+      <div className="inspection-card-chlorosis">
+        Chlorosis:{" "}
+        {Number.isFinite(Number(item.chlorosis_pct))
+          ? `${Number(item.chlorosis_pct).toFixed(1)}%`
+          : "0.0%"}
+      </div>
+
+      <div className="inspection-card-section">
+        <div className="inspection-card-section-title">Stage 1</div>
+        <div className="inspection-card-stage-value">
+          {item.stage_1_result || "-"}
+        </div>
+      </div>
+
+      {showStage2 && (
+        <div className="inspection-card-section">
+          <div className="inspection-card-section-title">Stage 2</div>
+          <div className="inspection-card-bars">
+            {Object.entries(item.stage_2).map(([label, probability]) => (
+              <div key={label} className="inspection-bar-row">
+                <span className="inspection-bar-label">{label}</span>
+                <div className="inspection-bar-track">
+                  <div
+                    className="inspection-bar-fill"
+                    style={{ width: formatProbability(probability) }}
+                  />
+                </div>
+                <span className="inspection-bar-value">
+                  {formatProbability(probability)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showStage3 && (
+        <div className="inspection-card-section">
+          <div className="inspection-card-section-title">Stage 3</div>
+          <div className="inspection-card-bars">
+            {Object.entries(item.stage_3).map(([label, probability]) => (
+              <div key={label} className="inspection-bar-row">
+                <span className="inspection-bar-label">{label}</span>
+                <div className="inspection-bar-track">
+                  <div
+                    className="inspection-bar-fill"
+                    style={{ width: formatProbability(probability) }}
+                  />
+                </div>
+                <span className="inspection-bar-value">
+                  {formatProbability(probability)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function getTreeAge(datePlanted) {
@@ -200,6 +285,9 @@ function resolveCoordinate(tree, rawExif) {
 export default function MapPage() {
   const [markers, setMarkers] = useState([]);
   const [selectedMarker, setSelectedMarker] = useState(null);
+  const [selectedAnalysis, setSelectedAnalysis] = useState(null);
+  const [selectedInspectionImages, setSelectedInspectionImages] = useState([]);
+  const [inspectionLoading, setInspectionLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
@@ -243,6 +331,93 @@ export default function MapPage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedImage]);
+
+  useEffect(() => {
+    if (!selectedMarker?.treeId) {
+      setSelectedAnalysis(null);
+      setSelectedInspectionImages([]);
+      setInspectionLoading(false);
+      return undefined;
+    }
+
+    let isCancelled = false;
+
+    const fetchSelectedAnalysis = async () => {
+      setInspectionLoading(true);
+      try {
+        const { data: analysisData, error: analysisError } = await supabase
+          .from("analysis_results")
+          .select(
+            "inspection_date, diseases_detected, pests_detected, chlorosis_readings, image_ids, per_image_results, created_at",
+          )
+          .eq("tree_id", selectedMarker.treeId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (isCancelled) {
+          return;
+        }
+
+        if (analysisError || !analysisData) {
+          setSelectedAnalysis(null);
+          setSelectedInspectionImages(selectedMarker.latestImages || []);
+          return;
+        }
+
+        setSelectedAnalysis(analysisData);
+
+        const imageIds = Array.isArray(analysisData.image_ids)
+          ? analysisData.image_ids
+          : [];
+
+        if (imageIds.length === 0) {
+          setSelectedInspectionImages(selectedMarker.latestImages || []);
+          return;
+        }
+
+        const { data: imageRows, error: imageError } = await supabase
+          .from("images")
+          .select("id, file_path")
+          .in("id", imageIds);
+
+        if (isCancelled) {
+          return;
+        }
+
+        if (imageError || !imageRows) {
+          setSelectedInspectionImages(selectedMarker.latestImages || []);
+          return;
+        }
+
+        const urls = imageIds
+          .map((id) => imageRows.find((row) => String(row.id) === String(id)))
+          .filter(Boolean)
+          .map(
+            (row) =>
+              supabase.storage.from("leafImages").getPublicUrl(row.file_path)
+                .data.publicUrl,
+          );
+
+        setSelectedInspectionImages(urls);
+      } catch (error) {
+        if (!isCancelled) {
+          setSelectedAnalysis(null);
+          setSelectedInspectionImages(selectedMarker.latestImages || []);
+        }
+      } finally {
+        if (!isCancelled) {
+          setInspectionLoading(false);
+        }
+      }
+    };
+
+    fetchSelectedAnalysis();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedMarker]);
 
   const fetchMarkers = useCallback(async (showLoader = true) => {
     try {
@@ -688,63 +863,85 @@ export default function MapPage() {
                 </span>
               </div>
 
-              <h3 style={{ marginTop: "16px" }}>Latest Inspection Result</h3>
-              <div className="info-row">
-                <span className="label">Disease/s Detected:</span>
-                <span className="value">
-                  {selectedMarker.latestAnalysis?.diseases_detected?.length
-                    ? selectedMarker.latestAnalysis.diseases_detected.join(", ")
-                    : selectedMarker.hasDisease
-                      ? "Detected"
-                      : "None"}
-                </span>
-              </div>
-              <div className="info-row">
-                <span className="label">Pest/s Detected:</span>
-                <span className="value">
-                  {selectedMarker.latestAnalysis?.pests_detected?.length
-                    ? selectedMarker.latestAnalysis.pests_detected.join(", ")
-                    : "None"}
-                </span>
-              </div>
-              <div className="info-row">
-                <span className="label">Leaf Chlorosis:</span>
-                <span className="value map-value-multiline">
-                  {getChlorosisLines(selectedMarker.latestAnalysis).length >
-                  0 ? (
-                    <span className="map-chlorosis-lines">
-                      {getChlorosisLines(selectedMarker.latestAnalysis).map(
-                        (line) => (
-                          <span
-                            key={`${selectedMarker.id}-${line}`}
-                            className="map-chlorosis-line"
-                          >
-                            {line}
-                          </span>
-                        ),
-                      )}
-                    </span>
-                  ) : (
-                    "None"
-                  )}
-                </span>
-              </div>
-              <div className="info-row">
-                <span className="label">Date of Last Inspection:</span>
-                <span className="value">
-                  {formatDate(
-                    selectedMarker.latestAnalysis?.inspection_date ||
-                      selectedMarker.latestAnalysis?.created_at ||
-                      selectedMarker.capturedAt,
-                  )}
-                </span>
-              </div>
+              <h3 style={{ marginTop: "16px" }}>
+                Latest Inspection: {formatDate(selectedMarker.capturedAt)}
+              </h3>
+              {!inspectionLoading && !selectedMarker.isAnalyzed && (
+                <div className="info-row info-row-not-analyzed">
+                  <span className="label">Status:</span>
+                  <span className="value">Not Yet Analyzed</span>
+                </div>
+              )}
+              {inspectionLoading ? (
+                <div className="image-placeholder">
+                  Loading latest inspection...
+                </div>
+              ) : selectedAnalysis?.per_image_results &&
+                selectedAnalysis.per_image_results.length > 0 ? (
+                <>
+                  <div className="analysis-cards">
+                    {selectedAnalysis.per_image_results.map((item, idx) => {
+                      const requestedIndex = Number(item.image_index) - 1;
+                      let thumb = undefined;
+                      if (Array.isArray(selectedInspectionImages)) {
+                        if (
+                          Number.isFinite(requestedIndex) &&
+                          selectedInspectionImages[requestedIndex]
+                        ) {
+                          thumb = selectedInspectionImages[requestedIndex];
+                        } else if (selectedInspectionImages[idx]) {
+                          thumb = selectedInspectionImages[idx];
+                        }
+                      }
 
-              <h3 style={{ marginTop: "16px" }}>Latest Images</h3>
-              {selectedMarker.latestImages &&
-              selectedMarker.latestImages.length > 0 ? (
+                      return (
+                        <InspectionResultCard
+                          key={`${selectedMarker.id}-img-${item.image_index}`}
+                          item={item}
+                          thumbnailUrl={thumb}
+                          onPreviewImage={(src, imageIndex) =>
+                            setSelectedImage({
+                              src,
+                              alt: `Inspection image ${imageIndex}`,
+                            })
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+
+                  {selectedInspectionImages &&
+                    selectedInspectionImages.length > 0 && (
+                      <>
+                        <h3 style={{ marginTop: "16px" }}>Latest Images</h3>
+                        <div className="image-grid latest-image-grid">
+                          {selectedInspectionImages.map((imageUrl, index) => (
+                            <button
+                              key={`${selectedMarker.id}-${index}`}
+                              type="button"
+                              className="tree-image-button latest-image-button"
+                              onClick={() =>
+                                setSelectedImage({
+                                  src: imageUrl,
+                                  alt: `Leaf ${index + 1}`,
+                                })
+                              }
+                            >
+                              <img
+                                src={imageUrl}
+                                alt={`Leaf ${index + 1}`}
+                                className="tree-image latest-image"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                </>
+              ) : selectedInspectionImages &&
+                selectedInspectionImages.length > 0 ? (
                 <div className="image-grid">
-                  {selectedMarker.latestImages.map((imageUrl, index) => (
+                  {selectedInspectionImages.map((imageUrl, index) => (
                     <button
                       key={`${selectedMarker.id}-${index}`}
                       type="button"

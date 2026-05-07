@@ -1,22 +1,22 @@
 import { ThemedText } from "@/components/themed-text";
 import { supabase } from "@/supabase";
 import {
-  analyzeLeafImages,
-  warmUpFlask,
-  type PerImageResult,
+    analyzeLeafImages,
+    warmUpFlask,
+    type PerImageResult,
 } from "@/utils/analysis-service";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Image,
-  Modal,
-  PanResponder,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Image,
+    Modal,
+    PanResponder,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    View,
 } from "react-native";
 
 // ─────────────────────────────────────────────────────────────
@@ -106,28 +106,40 @@ function ProbabilityBar({ label, value }: { label: string; value: number }) {
 function PerImageCard({
   item,
   thumbnailUrl,
+  onPreviewImage,
 }: {
   item: PerImageResult;
   thumbnailUrl?: string;
+  onPreviewImage?: (url: string, imageIndex: number) => void;
 }) {
   // Determine the Stage 2 winning label (max probability entry)
   const s2Winner =
     item.stage_2 && Object.keys(item.stage_2).length > 0
-      ? Object.entries(item.stage_2).reduce((a, b) =>
-          b[1] > a[1] ? b : a,
-        )[0]
+      ? Object.entries(item.stage_2).reduce((a, b) => (b[1] > a[1] ? b : a))[0]
       : null;
 
-  const showStage2 = item.stage_1_result === "Unhealthy" && item.stage_2 != null;
+  const showStage2 =
+    item.stage_1_result === "Unhealthy" && item.stage_2 != null;
   const showStage3 = item.stage_3 != null && s2Winner === "BSL";
 
   return (
     <View style={card.container}>
       {/* Image header: number + thumbnail */}
       <View style={card.header}>
-        <ThemedText style={card.imageTitle}>Image {item.image_index}</ThemedText>
+        <ThemedText style={card.imageTitle}>
+          Image {item.image_index}
+        </ThemedText>
         {thumbnailUrl ? (
-          <Image source={{ uri: thumbnailUrl }} style={card.thumbnail} resizeMode="cover" />
+          <Pressable
+            onPress={() => onPreviewImage?.(thumbnailUrl, item.image_index)}
+            style={card.thumbnailButton}
+          >
+            <Image
+              source={{ uri: thumbnailUrl }}
+              style={card.thumbnail}
+              resizeMode="cover"
+            />
+          </Pressable>
         ) : (
           <View style={[card.thumbnail, card.thumbnailEmpty]} />
         )}
@@ -204,7 +216,11 @@ export default function TreeDetailsCard({
       if (!geotagData?.raw_exif) return;
       let rawExif = geotagData.raw_exif;
       if (typeof rawExif === "string") {
-        try { rawExif = JSON.parse(rawExif); } catch { return; }
+        try {
+          rawExif = JSON.parse(rawExif);
+        } catch {
+          return;
+        }
       }
       const ids: number[] = rawExif.image_ids || rawExif.imageIds || [];
       if (ids.length > 0) fetchInspectionImages(ids);
@@ -321,8 +337,7 @@ export default function TreeDetailsCard({
         }
       }
 
-      const imageIds: number[] =
-        rawExif.image_ids || rawExif.imageIds || [];
+      const imageIds: number[] = rawExif.image_ids || rawExif.imageIds || [];
 
       if (imageIds.length < 3) {
         throw new Error(
@@ -465,7 +480,9 @@ export default function TreeDetailsCard({
             <Pressable
               style={[
                 styles.analyzeButton,
-                analyzeDisabled ? styles.analyzeButtonDisabled : styles.analyzeButtonActive,
+                analyzeDisabled
+                  ? styles.analyzeButtonDisabled
+                  : styles.analyzeButtonActive,
               ]}
               onPress={analyzeReady ? handleAnalyze : undefined}
               disabled={analyzeDisabled}
@@ -532,10 +549,7 @@ export default function TreeDetailsCard({
 
         {/* Latest Inspection */}
         <ThemedText style={styles.sectionTitle}>
-          Latest Inspection:{" "}
-          {analysis
-            ? formatDate(analysis.inspection_date)
-            : formatDate(tree.capturedAt)}
+          Latest Inspection: {formatDate(tree.capturedAt)}
         </ThemedText>
 
         {/* ── Per-image breakdown ──────────────────────────── */}
@@ -546,13 +560,15 @@ export default function TreeDetailsCard({
             style={{ marginVertical: 8 }}
           />
         ) : analysis ? (
-          analysis.per_image_results && analysis.per_image_results.length > 0 ? (
+          analysis.per_image_results &&
+          analysis.per_image_results.length > 0 ? (
             // New per-image cards with probability bars
             analysis.per_image_results.map((item, idx) => (
               <PerImageCard
                 key={item.image_index}
                 item={item}
                 thumbnailUrl={inspectionImages[idx]}
+                onPreviewImage={(url) => setPreviewUrl(url)}
               />
             ))
           ) : (
@@ -563,25 +579,34 @@ export default function TreeDetailsCard({
               </ThemedText>
               {analysis.diseases_detected.length > 0 ? (
                 analysis.diseases_detected.map((d, i) => (
-                  <ThemedText key={i} style={styles.bulletText}>• {d}</ThemedText>
+                  <ThemedText key={i} style={styles.bulletText}>
+                    • {d}
+                  </ThemedText>
                 ))
               ) : (
-                <ThemedText style={styles.bulletText}>• None detected</ThemedText>
+                <ThemedText style={styles.bulletText}>
+                  • None detected
+                </ThemedText>
               )}
 
               <ThemedText style={styles.detailText}>Pests Detected:</ThemedText>
               {analysis.pests_detected.length > 0 ? (
                 analysis.pests_detected.map((p, i) => (
-                  <ThemedText key={i} style={styles.bulletText}>• {p}</ThemedText>
+                  <ThemedText key={i} style={styles.bulletText}>
+                    • {p}
+                  </ThemedText>
                 ))
               ) : (
-                <ThemedText style={styles.bulletText}>• None detected</ThemedText>
+                <ThemedText style={styles.bulletText}>
+                  • None detected
+                </ThemedText>
               )}
 
               <ThemedText style={styles.detailText}>
                 Chlorosis Readings:
               </ThemedText>
-              {analysis.chlorosis_readings && analysis.chlorosis_readings.length > 0 ? (
+              {analysis.chlorosis_readings &&
+              analysis.chlorosis_readings.length > 0 ? (
                 analysis.chlorosis_readings.map((r) => (
                   <ThemedText key={r.image_id} style={styles.bulletText}>
                     • Image {r.image_id} —{" "}
@@ -803,6 +828,10 @@ const card = StyleSheet.create({
     marginBottom: 4,
   },
   imageTitle: { fontSize: 15, fontWeight: "700", color: "#111" },
+  thumbnailButton: {
+    padding: 0,
+    backgroundColor: "transparent",
+  },
   thumbnail: { width: 64, height: 64, borderRadius: 8 },
   thumbnailEmpty: { backgroundColor: "#e5e7eb" },
   resultText: { fontSize: 14, color: "#374151" },

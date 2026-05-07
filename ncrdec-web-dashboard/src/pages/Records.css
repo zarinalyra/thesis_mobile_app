@@ -2,6 +2,8 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 1;
+  min-height: 0;
 }
 
 .records-container {
@@ -18,7 +20,14 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
+}
+
+.records-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .search-box {
@@ -43,7 +52,6 @@
 .records-table {
   width: 100%;
   border-collapse: collapse;
-  overflow: auto;
 }
 
 .records-table thead {
@@ -59,10 +67,6 @@
   color: #1b5e20;
   font-size: 14px;
   border-bottom: 1px solid #ddd;
-}
-
-.records-table tbody {
-  overflow-y: auto;
 }
 
 .records-table td {
@@ -159,6 +163,11 @@
   margin-left: 8px;
 }
 
+.detail-row-not-analyzed .value {
+  color: #8d6e00;
+  font-weight: 600;
+}
+
 .value-multiline {
   display: flex;
   flex-direction: column;
@@ -170,6 +179,11 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.latest-record-image-grid {
+  grid-template-columns: repeat(3, 92px);
+  justify-content: start;
 }
 
 .record-tree-image-button {
@@ -184,6 +198,10 @@
   transform: scale(1.02);
 }
 
+.latest-record-image-button {
+  width: 92px;
+}
+
 .record-tree-image {
   width: 100%;
   aspect-ratio: 1 / 1;
@@ -192,6 +210,154 @@
   border: 1px solid #e6e6e6;
   display: block;
   transition: transform 0.2s ease;
+}
+
+.latest-record-image {
+  width: 92px;
+  height: 92px;
+}
+
+.record-analysis-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+@media (min-width: 980px) {
+  .record-analysis-cards {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  }
+}
+
+.record-inspection-card {
+  border: 1px solid #dfe8df;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbf7 100%);
+  padding: 14px;
+  box-shadow: 0 10px 24px rgba(16, 24, 16, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.record-inspection-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.record-inspection-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2b1f;
+}
+
+.record-inspection-thumbnail {
+  width: 60px;
+  height: 60px;
+  border-radius: 12px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid #dfe6df;
+  background: #edf3ed;
+}
+
+.record-inspection-thumbnail-button {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 12px;
+  cursor: zoom-in;
+  flex-shrink: 0;
+}
+
+.record-inspection-thumbnail-button:focus-visible {
+  outline: 2px solid #1b8e32;
+  outline-offset: 2px;
+}
+
+.record-inspection-thumbnail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b786b;
+}
+
+.record-inspection-result {
+  font-size: 13px;
+  color: #243224;
+}
+
+.record-inspection-result strong {
+  color: #0f5a17;
+}
+
+.record-inspection-chlorosis {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4d5a4d;
+}
+
+.record-inspection-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.record-inspection-section-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7a877a;
+}
+
+.record-inspection-stage-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #263226;
+}
+
+.record-inspection-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.record-inspection-bar-row {
+  display: grid;
+  grid-template-columns: 34px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+}
+
+.record-inspection-bar-label,
+.record-inspection-bar-value {
+  font-size: 11px;
+  font-weight: 700;
+  color: #546154;
+}
+
+.record-inspection-bar-value {
+  text-align: right;
+}
+
+.record-inspection-bar-track {
+  height: 10px;
+  background: #e7ece7;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.record-inspection-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #3fa34d 0%, #1b8e32 100%);
 }
 
 .image-lightbox {
