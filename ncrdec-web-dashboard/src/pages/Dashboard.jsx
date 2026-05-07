@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import {
-    Bar,
-    BarChart,
-    CartesianGrid,
-    Cell,
-    Legend,
-    Line,
-    LineChart,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
 import StatCard from "../components/StatCard";
 import { formatDate, loadDashboardData } from "../lib/coffeeData";
@@ -161,20 +161,8 @@ export default function Dashboard() {
       setFarmGraphData(monthlyTrendRows);
 
       const dailyRows = new Map();
-      const sortedAnalysisRows = [...(analysisRows || [])].sort((a, b) => {
-        const aTime = new Date(
-          a.inspection_date || a.created_at || 0,
-        ).getTime();
-        const bTime = new Date(
-          b.inspection_date || b.created_at || 0,
-        ).getTime();
-        return aTime - bTime;
-      });
-
-      sortedAnalysisRows.forEach((analysis) => {
-        const dateKey = toDateKey(
-          analysis.inspection_date || analysis.created_at,
-        );
+      latestTrees.forEach((tree) => {
+        const dateKey = toDateKey(tree.capturedAt);
         if (!dateKey) {
           return;
         }
@@ -184,52 +172,42 @@ export default function Dashboard() {
           label: formatTrendDateLabel(dateKey),
           detected: 0,
           healthy: 0,
-          notYetAnalyzed: totalTrees,
+          notYetAnalyzed: 0,
         };
 
-        const hasDetectedDisease =
-          Array.isArray(analysis.diseases_detected) &&
-          analysis.diseases_detected.length > 0;
-        const hasDetectedPest =
-          Array.isArray(analysis.pests_detected) &&
-          analysis.pests_detected.length > 0;
-
-        if (hasDetectedDisease || hasDetectedPest) {
-          current.detected += 1;
-        } else {
-          current.healthy += 1;
-        }
-
-        dailyRows.set(dateKey, current);
-      });
-
-      const analyzedTreeIds = new Set();
-      sortedAnalysisRows.forEach((analysis) => {
-        const dateKey = toDateKey(
-          analysis.inspection_date || analysis.created_at,
+        const latestAnalysis = latestAnalysisByTree.get(
+          String(tree.treeId || ""),
         );
-        if (!dateKey || !dailyRows.has(dateKey)) {
-          return;
+        if (!latestAnalysis) {
+          current.notYetAnalyzed += 1;
+        } else {
+          const hasDetectedDisease =
+            Array.isArray(latestAnalysis.diseases_detected) &&
+            latestAnalysis.diseases_detected.length > 0;
+          const hasDetectedPest =
+            Array.isArray(latestAnalysis.pests_detected) &&
+            latestAnalysis.pests_detected.length > 0;
+
+          if (hasDetectedDisease || hasDetectedPest) {
+            current.detected += 1;
+          } else {
+            current.healthy += 1;
+          }
         }
 
-        const treeId = String(analysis.tree_id || "");
-        if (treeId) {
-          analyzedTreeIds.add(treeId);
-        }
-
-        const current = dailyRows.get(dateKey);
-        current.notYetAnalyzed = Math.max(0, totalTrees - analyzedTreeIds.size);
         dailyRows.set(dateKey, current);
       });
 
-      const trendRows = Array.from(dailyRows.values()).slice(-10);
+      const trendRows = Array.from(dailyRows.values())
+        .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+        .slice(-10);
 
       setHealthTrendData(trendRows);
 
       // Build Disease/Pest breakdown
       const diseaseCountMap = new Map();
       const pestCountMap = new Map();
-      sortedAnalysisRows.forEach((analysis) => {
+      latestAnalysisByTree.forEach((analysis) => {
         if (Array.isArray(analysis.diseases_detected)) {
           analysis.diseases_detected.forEach((disease) => {
             if (disease && disease.trim()) {
@@ -277,23 +255,30 @@ export default function Dashboard() {
 
       // Build Recovery tracking
       const treeAnalysesMap = new Map();
-      sortedAnalysisRows.forEach((analysis) => {
-        const treeId = String(analysis.tree_id || "");
-        if (!treeId) {
-          return;
-        }
-        if (!treeAnalysesMap.has(treeId)) {
-          treeAnalysesMap.set(treeId, []);
-        }
-        treeAnalysesMap.get(treeId).push(analysis);
-      });
+      [...(analysisRows || [])]
+        .sort((a, b) => {
+          const aTime = new Date(
+            a.inspection_date || a.created_at || 0,
+          ).getTime();
+          const bTime = new Date(
+            b.inspection_date || b.created_at || 0,
+          ).getTime();
+          return aTime - bTime;
+        })
+        .forEach((analysis) => {
+          const treeId = String(analysis.tree_id || "");
+          if (!treeId) {
+            return;
+          }
+          if (!treeAnalysesMap.has(treeId)) {
+            treeAnalysesMap.set(treeId, []);
+          }
+          treeAnalysesMap.get(treeId).push(analysis);
+        });
 
       let recoveredCount = 0;
       let stillAffectedCount = 0;
       treeAnalysesMap.forEach((analyses) => {
-        if (analyses.length < 2) {
-          return;
-        }
         // Sort analyses per tree by date
         const sortedPerTree = [...analyses].sort((a, b) => {
           const aTime = new Date(
@@ -313,15 +298,15 @@ export default function Dashboard() {
           (Array.isArray(firstAnalysis.pests_detected) &&
             firstAnalysis.pests_detected.length > 0);
 
-        const hasDiseasOrPestNow =
+        const hasDiseaseOrPestNow =
           (Array.isArray(latestAnalysis.diseases_detected) &&
             latestAnalysis.diseases_detected.length > 0) ||
           (Array.isArray(latestAnalysis.pests_detected) &&
             latestAnalysis.pests_detected.length > 0);
 
-        if (hadDiseaseOrPestBefore && !hasDiseasOrPestNow) {
+        if (hadDiseaseOrPestBefore && !hasDiseaseOrPestNow) {
           recoveredCount += 1;
-        } else if (hadDiseaseOrPestBefore && hasDiseasOrPestNow) {
+        } else if (hasDiseaseOrPestNow) {
           stillAffectedCount += 1;
         }
       });
